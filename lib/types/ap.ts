@@ -5,6 +5,7 @@ export type NodeEntry = {
   label: string;
   text: string | null;
   status: EntryStatus;
+  isConfirmed: boolean;
 };
 
 export type EdgeEntry = {
@@ -14,6 +15,7 @@ export type EdgeEntry = {
   label: string;
   text: string | null;
   status: EntryStatus;
+  isConfirmed: boolean;
 };
 
 export type GenerationModel = {

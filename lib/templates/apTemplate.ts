@@ -65,10 +65,6 @@ export const AP_TEMPLATE_EDGES: TemplateEdgeDefinition[] = [
   { id: "e4", source: "n3", target: "n4", label: "コミュニティ化" },
   { id: "e5", source: "n4", target: "n5", label: "組織化" },
   { id: "e6", source: "n4", target: "n6", label: "コミュニケーション" },
-  { id: "e7", source: "n5", target: "n1", label: "パラダイム" },
-  { id: "e8", source: "n6", target: "n3", label: "習慣化" },
   { id: "e9", source: "n1", target: "n5", label: "標準化" },
   { id: "e10", source: "n3", target: "n6", label: "文化芸術振興" },
-  { id: "e11", source: "n5", target: "n2", label: "製品・サービス" },
-  { id: "e12", source: "n6", target: "n2", label: "意味付け" },
 ];

@@ -23,6 +23,7 @@ function createGeneration(generationIndex: number): GenerationModel {
       label: node.label,
       text,
       status,
+      isConfirmed: status === "filled",
     };
   });
 
@@ -46,6 +47,7 @@ function createGeneration(generationIndex: number): GenerationModel {
       label: edge.label,
       text,
       status,
+      isConfirmed: status === "filled",
     };
   });
 

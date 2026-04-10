@@ -52,6 +52,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
           ...currentNode,
           text,
           status: nextStatus,
+          isConfirmed: true,
         };
 
         return {
@@ -87,6 +88,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
           ...currentEdge,
           text,
           status: nextStatus,
+          isConfirmed: true,
         };
 
         return {
