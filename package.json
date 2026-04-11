@@ -1,21 +1,29 @@
 {
   "dependencies": {
+    "@prisma/adapter-better-sqlite3": "^7.7.0",
+    "@prisma/client": "^7.7.0",
     "@xyflow/react": "^12.10.2",
+    "better-sqlite3": "^12.8.0",
     "firebase": "^12.11.0",
     "next": "^16.2.2",
+    "openai": "^6.34.0",
+    "prisma": "^7.7.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "reactflow": "^11.11.4",
     "zustand": "^5.0.12"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.5.2",
     "@types/react": "^19.2.14",
     "typescript": "^6.0.2"
   },
-    "scripts": {
+  "scripts": {
+    "postinstall": "prisma generate",
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "prisma:generate": "prisma generate"
   }
 }

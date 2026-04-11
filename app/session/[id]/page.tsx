@@ -1,9 +1,11 @@
 import { SessionWorkspace } from "@/components/editor/SessionWorkspace";
 
-export default function SessionPage({
+export default async function SessionPage({
   params,
 }: {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }) {
-  return <SessionWorkspace sessionId={params.id} />;
+  const { id } = await params;
+
+  return <SessionWorkspace sessionId={id} />;
 }

@@ -1,0 +1,14 @@
+
+> dev
+> next dev
+
+▲ Next.js 16.2.2 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://172.31.212.51:3000
+- Environments: .env
+✓ Ready in 426ms
+Creating turbopack project {
+  dir: 'C:\\Users\\nhaya\\Archeological Prototyping\\Archeological-prototyping',
+  testMode: true
+}
+

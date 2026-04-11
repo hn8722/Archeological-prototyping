@@ -14,6 +14,7 @@ type SessionStore = {
   activeGeneration: number;
   selectedTarget: SelectedTarget;
   initializeSession: (session: SessionModel) => void;
+  setSession: (session: SessionModel) => void;
   selectTarget: (target: SelectedTarget) => void;
   setActiveGeneration: (generation: number) => void;
   updateNodeText: (generationIndex: number, nodeId: string, text: string) => void;
@@ -32,9 +33,34 @@ export const useSessionStore = create<SessionStore>((set) => ({
       selectedTarget: null,
     }),
 
-  selectTarget: (target) => set({ selectedTarget: target }),
+  setSession: (session) =>
+    set({
+      session,
+      activeGeneration: session.activeGeneration,
+    }),
 
-  setActiveGeneration: (generation) => set({ activeGeneration: generation }),
+  selectTarget: (target) =>
+    set((state) => ({
+      selectedTarget: target,
+      activeGeneration: target ? target.generation : state.activeGeneration,
+      session: state.session
+        ? {
+            ...state.session,
+            activeGeneration: target ? target.generation : state.activeGeneration,
+          }
+        : null,
+    })),
+
+  setActiveGeneration: (generation) =>
+    set((state) => ({
+      activeGeneration: generation,
+      session: state.session
+        ? {
+            ...state.session,
+            activeGeneration: generation,
+          }
+        : null,
+    })),
 
   updateNodeText: (generationIndex, nodeId, text) =>
     set((state) => {
@@ -44,7 +70,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
         if (generation.generationIndex !== generationIndex) return generation;
 
         const currentNode = generation.nodes[nodeId];
-        if (!currentNode || currentNode.status === "locked") return generation;
+        if (!currentNode) return generation;
 
         const nextStatus: EntryStatus = text.trim() ? "filled" : "empty";
 
@@ -80,7 +106,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
         if (generation.generationIndex !== generationIndex) return generation;
 
         const currentEdge = generation.edges[edgeId];
-        if (!currentEdge || currentEdge.status === "locked") return generation;
+        if (!currentEdge) return generation;
 
         const nextStatus: EntryStatus = text.trim() ? "filled" : "empty";
 

@@ -1,4 +1,4 @@
-export type EntryStatus = "filled" | "empty" | "locked" | "error";
+export type EntryStatus = "filled" | "empty" | "error";
 
 export type NodeEntry = {
   templateId: string;

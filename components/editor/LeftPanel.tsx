@@ -3,6 +3,11 @@
 import { useSessionStore } from "@/store/useSessionStore";
 import { StatusBadge } from "@/components/common/StatusBadge";
 
+function getDisplayText(text: string | null) {
+  if (!text) return null;
+  return text.trim() || null;
+}
+
 export function LeftPanel() {
   const session = useSessionStore((state) => state.session);
   const activeGeneration = useSessionStore((state) => state.activeGeneration);
@@ -19,7 +24,7 @@ export function LeftPanel() {
 
   return (
     <aside className="panel">
-      <h2 className="panel-title">左図: APパーツ一覧</h2>
+      <h2 className="panel-title">APパーツ一覧</h2>
 
       <div className="generation-tabs" role="tablist" aria-label="Generation tabs">
         {generations.map((generation) => {
@@ -41,9 +46,9 @@ export function LeftPanel() {
       </div>
 
       <div className="generation-block">
-        <h3 className="generation-title">世代 {currentGeneration.generationIndex}</h3>
+      
 
-        <div className="sub-section-title">ノード</div>
+        <div className="sub-section-title">Objects</div>
         {Object.values(currentGeneration.nodes).map((node) => {
           const isSelected =
             selectedTarget?.kind === "node" &&
@@ -62,13 +67,18 @@ export function LeftPanel() {
                 })
               }
             >
-              <span>{node.label}</span>
+              <span className="item-row-content">
+                <span>{node.label}</span>
+                {getDisplayText(node.text) && (
+                  <span className="item-row-preview">{getDisplayText(node.text)}</span>
+                )}
+              </span>
               <StatusBadge status={node.status} />
             </button>
           );
         })}
 
-        <div className="sub-section-title">エッジ</div>
+        <div className="sub-section-title">Arrows</div>
         {Object.values(currentGeneration.edges).map((edge) => {
           const isSelected =
             selectedTarget?.kind === "edge" &&
@@ -87,8 +97,11 @@ export function LeftPanel() {
                 })
               }
             >
-              <span>
-                {edge.label} ({edge.source} / {edge.target})
+              <span className="item-row-content">
+                <span>{edge.label}</span>
+                {getDisplayText(edge.text) && (
+                  <span className="item-row-preview">{getDisplayText(edge.text)}</span>
+                )}
               </span>
               <StatusBadge status={edge.status} />
             </button>

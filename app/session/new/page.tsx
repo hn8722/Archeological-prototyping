@@ -6,10 +6,37 @@ import { useState } from "react";
 export default function NewSessionPage() {
   const router = useRouter();
   const [sessionName, setSessionName] = useState("");
+  const [isCreating, setIsCreating] = useState(false);
 
-  const handleStart = () => {
-    const id = "demo-session";
-    router.push(`/session/${id}`);
+  const handleStart = async () => {
+    setIsCreating(true);
+
+    try {
+      const response = await fetch("/api/sessions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: sessionName.trim() || undefined,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to create session");
+      }
+
+      const data = (await response.json()) as {
+        session: { id: string };
+      };
+
+      router.push(`/session/${data.session.id}`);
+    } catch (error) {
+      console.error(error);
+      alert("セッション作成に失敗しました。");
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   return (
@@ -22,17 +49,14 @@ export default function NewSessionPage() {
           className="form-input"
           value={sessionName}
           onChange={(e) => setSessionName(e.target.value)}
-          placeholder="例: 物語生成実験01"
+          placeholder="例: 未来の公共交通ワークショップ"
         />
 
-        <label className="form-label">テンプレート</label>
-        <select className="form-input" defaultValue="default-ap">
-          <option value="default-ap">Default AP Template</option>
-        </select>
-
-        <button className="button-primary" onClick={handleStart}>
-          開始する
-        </button>
+        <div className="form-actions">
+          <button className="button-primary" onClick={handleStart} disabled={isCreating}>
+            {isCreating ? "作成中..." : "開始する"}
+          </button>
+        </div>
       </div>
     </div>
   );

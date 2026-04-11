@@ -13,6 +13,8 @@ export type TemplateEdgeDefinition = {
   label: string;
 };
 
+export type TemplateCrossGenerationEdgeDefinition = TemplateEdgeDefinition;
+
 export const AP_TEMPLATE_NODES: TemplateNodeDefinition[] = [
   {
     id: "n1",
@@ -67,4 +69,11 @@ export const AP_TEMPLATE_EDGES: TemplateEdgeDefinition[] = [
   { id: "e6", source: "n4", target: "n6", label: "コミュニケーション" },
   { id: "e9", source: "n1", target: "n5", label: "標準化" },
   { id: "e10", source: "n3", target: "n6", label: "文化芸術振興" },
+];
+
+export const AP_CROSS_GENERATION_EDGES: TemplateCrossGenerationEdgeDefinition[] = [
+  { id: "cg1", source: "n5", target: "n3", label: "パラダイム" },
+  { id: "cg2", source: "n5", target: "n2", label: "製品・サービス" },
+  { id: "cg3", source: "n6", target: "n2", label: "意味付け" },
+  { id: "cg4", source: "n6", target: "n1", label: "習慣化" },
 ];

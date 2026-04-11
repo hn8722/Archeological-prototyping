@@ -2,7 +2,11 @@
 
 import { CSSProperties, useMemo } from "react";
 import { useSessionStore } from "@/store/useSessionStore";
-import { AP_TEMPLATE_EDGES, AP_TEMPLATE_NODES } from "@/lib/templates/apTemplate";
+import {
+  AP_CROSS_GENERATION_EDGES,
+  AP_TEMPLATE_EDGES,
+  AP_TEMPLATE_NODES,
+} from "@/lib/templates/apTemplate";
 import { EntryStatus } from "@/lib/types/ap";
 
 const NODE_WIDTH = 190;
@@ -17,13 +21,6 @@ const POSITION_SCALE_Y = 1.28;
 const GENERATION_X_OFFSETS: Record<number, number> = {
   3: -120,
 };
-
-const CROSS_GENERATION_CONNECTIONS = [
-  { sourceId: "n5", targetId: "n3", label: "パラダイム" },
-  { sourceId: "n5", targetId: "n2", label: "製品・サービス" },
-  { sourceId: "n6", targetId: "n2", label: "意味付け" },
-  { sourceId: "n6", targetId: "n1", label: "習慣化" },
-] as const;
 
 const GENERATION_POSITION_OVERRIDES: Record<number, Record<string, { x: number; y: number }>> = {
   // Generation 2 is used as a transition layer so links from both sides stay cleaner.
@@ -74,8 +71,12 @@ type DiagramEdge = {
 };
 
 type DiagramBridge = {
+  generationIndex: number;
+  edgeId: string;
   id: string;
   label: string;
+  status: EntryStatus;
+  isSelected: boolean;
   x1: number;
   y1: number;
   x2: number;
@@ -122,11 +123,10 @@ function getNodeAnchorPoint(
 
 function getNodeAppearance(status: EntryStatus, color: string, isSelected: boolean) {
   return {
-    background:
-      status === "filled" ? color : status === "locked" ? "#dddddd" : "#eef1f4",
+    background: status === "filled" ? color : "#eef1f4",
     borderColor:
       status === "error" ? "#d92d20" : isSelected ? "#111111" : "#a8afb8",
-    opacity: status === "locked" ? 0.45 : status === "empty" ? 0.78 : 1,
+    opacity: status === "empty" ? 0.78 : 1,
     boxShadow: isSelected ? "0 0 0 3px rgba(17, 17, 17, 0.12)" : "none",
   };
 }
@@ -134,7 +134,7 @@ function getNodeAppearance(status: EntryStatus, color: string, isSelected: boole
 function getLineAppearance(status: EntryStatus, isSelected: boolean) {
   return {
     stroke: status === "error" ? "#d92d20" : "#98a2b3",
-    opacity: status === "locked" ? 0.35 : status === "empty" ? 0.55 : 1,
+    opacity: status === "empty" ? 0.55 : 1,
     strokeWidth: isSelected ? 3.5 : 2.2,
   };
 }
@@ -245,12 +245,20 @@ export function CenterGraph() {
 
     const bridges: DiagramBridge[] = generationIndexes.slice(0, -1).flatMap((generationIndex, index) => {
       const nextGenerationIndex = generationIndexes[index + 1];
+      const generation = session.generations.find((item) => item.generationIndex === generationIndex);
 
-      return CROSS_GENERATION_CONNECTIONS.flatMap<DiagramBridge>((connection, connectionIndex) => {
-        const source = getNodePosition(generationIndex, connection.sourceId);
-        const target = getNodePosition(nextGenerationIndex, connection.targetId);
+      if (!generation) return [];
 
-        if (!source || !target) return [];
+      return AP_CROSS_GENERATION_EDGES.flatMap<DiagramBridge>((connection, connectionIndex) => {
+        const source = getNodePosition(generationIndex, connection.source);
+        const target = getNodePosition(nextGenerationIndex, connection.target);
+        const edgeEntry = generation.edges[connection.id];
+        const isSelected =
+          selectedTarget?.kind === "edge" &&
+          selectedTarget.generation === generationIndex &&
+          selectedTarget.id === connection.id;
+
+        if (!source || !target || !edgeEntry) return [];
 
         const start = getNodeAnchorPoint(source, target);
         const end = getNodeAnchorPoint(target, source);
@@ -263,8 +271,12 @@ export function CenterGraph() {
 
         return [
           {
-            id: `${generationIndex}-${nextGenerationIndex}-${connection.sourceId}-${connection.targetId}`,
+            generationIndex,
+            edgeId: connection.id,
+            id: `${generationIndex}-${nextGenerationIndex}-${connection.source}-${connection.target}`,
             label: connection.label,
+            status: edgeEntry.status,
+            isSelected,
             x1,
             y1,
             x2,
@@ -287,7 +299,7 @@ export function CenterGraph() {
 
   return (
     <section className="panel graph-panel">
-      <h2 className="panel-title">上図: 3世代連結APマップ</h2>
+      <h2 className="panel-title">APマップ</h2>
       <div className="ap-map-wrapper">
         <div
           className="ap-map-canvas"
@@ -341,8 +353,9 @@ export function CenterGraph() {
               <path
                 key={bridge.id}
                 d={bridge.path}
-                stroke="#98a2b3"
-                strokeWidth="2"
+                stroke={getLineAppearance(bridge.status, bridge.isSelected).stroke}
+                strokeWidth={getLineAppearance(bridge.status, bridge.isSelected).strokeWidth}
+                opacity={getLineAppearance(bridge.status, bridge.isSelected).opacity}
                 strokeLinecap="round"
                 fill="none"
                 strokeDasharray={bridge.dashed ? "8 8" : undefined}
@@ -365,16 +378,27 @@ export function CenterGraph() {
           ))}
 
           {graphModel.bridges.map((bridge) => (
-            <div
+            <button
               key={`${bridge.id}-label`}
-              className="ap-bridge-label"
+              type="button"
+              className={`ap-bridge-label ${bridge.isSelected ? "ap-edge-label-selected" : ""}`}
               style={{
                 left: `${bridge.labelX - 82}px`,
                 top: `${bridge.labelY - 14}px`,
               }}
+              onClick={() =>
+                selectTarget({
+                  generation: bridge.generationIndex,
+                  kind: "edge",
+                  id: bridge.edgeId,
+                })
+              }
             >
               {bridge.label}
-            </div>
+              <span className="ap-hover-tooltip" aria-hidden="true">
+                {" "}
+              </span>
+            </button>
           ))}
 
           {graphModel.edges.map((edge) => (
@@ -395,6 +419,9 @@ export function CenterGraph() {
               }
             >
               <span>{edge.label}</span>
+              <span className="ap-hover-tooltip" aria-hidden="true">
+                {" "}
+              </span>
             </button>
           ))}
 
@@ -425,6 +452,9 @@ export function CenterGraph() {
                 }
               >
                 <strong>{node.label}</strong>
+                <span className="ap-hover-tooltip" aria-hidden="true">
+                  {" "}
+                </span>
               </button>
             );
           })}
