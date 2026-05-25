@@ -1,9 +1,14 @@
 import { NextResponse } from "next/server";
 import { createSessionRecord, listSessionRecords } from "@/lib/server/session-store";
+import { getUser } from "@/lib/auth/actions";
 
 export async function GET() {
   try {
-    const sessions = await listSessionRecords();
+    const user = await getUser();
+    if (!user) {
+      return NextResponse.json({ sessions: [] }, { status: 401 });
+    }
+    const sessions = await listSessionRecords(user.id);
     return NextResponse.json({ sessions });
   } catch (error) {
     console.error("Failed to list sessions", error);
@@ -13,8 +18,12 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json().catch(() => ({}))) as { name?: string };
-    const session = await createSessionRecord(body.name);
+    const user = await getUser();
+    if (!user) {
+      return NextResponse.json({ error: "ログインが必要です。" }, { status: 401 });
+    }
+    const body = (await request.json().catch(() => ({}))) as { name?: string; snapshot?: string };
+    const session = await createSessionRecord(body.name, user.id, body.snapshot);
     return NextResponse.json({ session }, { status: 201 });
   } catch (error) {
     console.error("Failed to create session", error);

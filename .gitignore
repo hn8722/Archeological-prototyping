@@ -1,7 +1,12 @@
 .next/
 node_modules/
-
 /generated/prisma
 .env
 prisma/dev.db
 prisma/dev.db-journal
+backups/
+dev.db
+*.log
+tsconfig.tsbuildinfo
+.claude/
+prisma/*.backup-*

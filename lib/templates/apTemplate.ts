@@ -39,7 +39,7 @@ export const AP_TEMPLATE_NODES: TemplateNodeDefinition[] = [
   },
   {
     id: "n4",
-    label: "社会問題",
+    label: "社会の目標",
     x: 430,
     y: 180,
     color: "#f4ea85",

@@ -1,11 +1,15 @@
 import { NextResponse } from "next/server";
 import {
-  buildInitialSession,
+  applySessionPatchRecord,
+  canManageSession,
+  canReadSession,
+  canWriteSession,
   deleteSessionRecord,
   getSessionRecord,
   saveSessionRecord,
 } from "@/lib/server/session-store";
-import { SessionModel } from "@/lib/types/ap";
+import { getUser } from "@/lib/auth/actions";
+import { SessionModel, SessionPatch } from "@/lib/types/ap";
 
 export async function GET(
   _request: Request,
@@ -13,13 +17,15 @@ export async function GET(
 ) {
   try {
     const { id } = await context.params;
-    const session = await getSessionRecord(id);
-
-    if (!session) {
-      const fallback = buildInitialSession(id);
-      return NextResponse.json({ session: fallback, persisted: false });
+    const user = await getUser();
+    const access = await canReadSession(id, user?.id, user?.email);
+    if (!access.exists) {
+      return NextResponse.json({ error: "セッションが見つかりません。" }, { status: 404 });
     }
-
+    if (!access.allowed) {
+      return NextResponse.json({ error: "このセッションを閲覧する権限がありません。" }, { status: 403 });
+    }
+    const session = await getSessionRecord(id);
     return NextResponse.json({ session, persisted: true });
   } catch (error) {
     console.error("Failed to fetch session", error);
@@ -33,10 +39,22 @@ export async function PUT(
 ) {
   try {
     const { id } = await context.params;
+    const user = await getUser();
+    if (!user) {
+      return NextResponse.json({ error: "ログインが必要です。" }, { status: 401 });
+    }
     const body = (await request.json()) as { session?: SessionModel };
 
     if (!body.session || body.session.id !== id) {
       return NextResponse.json({ error: "保存データが不正です。" }, { status: 400 });
+    }
+
+    const access = await canWriteSession(id, user.id, user.email);
+    if (!access.exists) {
+      return NextResponse.json({ error: "セッションが見つかりません。" }, { status: 404 });
+    }
+    if (!access.allowed) {
+      return NextResponse.json({ error: "このセッションを編集する権限がありません。" }, { status: 403 });
     }
 
     const session = await saveSessionRecord(body.session);
@@ -47,12 +65,62 @@ export async function PUT(
   }
 }
 
+export async function PATCH(
+  request: Request,
+  context: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await context.params;
+    const user = await getUser();
+    if (!user) {
+      return NextResponse.json({ error: "ログインが必要です。" }, { status: 401 });
+    }
+    const body = (await request.json()) as { patch?: SessionPatch };
+
+    if (!body.patch || body.patch.sessionId !== id) {
+      return NextResponse.json({ error: "更新パッチが不正です。" }, { status: 400 });
+    }
+
+    const access = await canWriteSession(id, user.id, user.email);
+    if (!access.exists) {
+      return NextResponse.json({ error: "セッションが見つかりません。" }, { status: 404 });
+    }
+    if (!access.allowed) {
+      return NextResponse.json({ error: "このセッションを編集する権限がありません。" }, { status: 403 });
+    }
+
+    const result = await applySessionPatchRecord(id, body.patch);
+    if (!result.ok) {
+      return NextResponse.json(
+        { error: "最新の変更と競合しました。", session: result.session },
+        { status: 409 }
+      );
+    }
+
+    return NextResponse.json({ ok: true, revision: result.session.revision });
+  } catch (error) {
+    console.error("Failed to patch session", error);
+    return NextResponse.json({ error: "セッション更新に失敗しました。" }, { status: 500 });
+  }
+}
+
 export async function DELETE(
   _request: Request,
   context: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await context.params;
+    const user = await getUser();
+    if (!user) {
+      return NextResponse.json({ error: "ログインが必要です。" }, { status: 401 });
+    }
+    const access = await canManageSession(id, user.id);
+    if (!access.exists) {
+      return NextResponse.json({ error: "セッションが見つかりません。" }, { status: 404 });
+    }
+    if (!access.allowed) {
+      return NextResponse.json({ error: "このセッションを削除する権限がありません。" }, { status: 403 });
+    }
     await deleteSessionRecord(id);
     return NextResponse.json({ ok: true });
   } catch (error) {

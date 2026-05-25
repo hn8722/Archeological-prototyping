@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 type SessionSummary = {
   id: string;
   name: string;
+  isPublic: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -14,26 +15,25 @@ type SessionSummary = {
 export function SessionList({ initialSessions }: { initialSessions: SessionSummary[] }) {
   const router = useRouter();
   const [sessions, setSessions] = useState(initialSessions);
+
+  useEffect(() => {
+    fetch("/api/sessions")
+      .then((r) => r.json())
+      .then((data: { sessions: SessionSummary[] }) => setSessions(data.sessions))
+      .catch(console.error);
+  }, []);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   const handleDelete = async (session: SessionSummary) => {
     const shouldDelete = window.confirm(`「${session.name}」を削除しますか？`);
     if (!shouldDelete) return;
 
     setDeletingId(session.id);
-
     try {
-      const response = await fetch(`/api/sessions/${session.id}`, {
-        method: "DELETE",
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to delete session");
-      }
-
-      setSessions((currentSessions) =>
-        currentSessions.filter((currentSession) => currentSession.id !== session.id)
-      );
+      const response = await fetch(`/api/sessions/${session.id}`, { method: "DELETE" });
+      if (!response.ok) throw new Error("Failed to delete session");
+      setSessions((prev) => prev.filter((s) => s.id !== session.id));
       router.refresh();
     } catch (error) {
       console.error(error);
@@ -43,8 +43,29 @@ export function SessionList({ initialSessions }: { initialSessions: SessionSumma
     }
   };
 
+  const handleTogglePublic = async (session: SessionSummary) => {
+    setTogglingId(session.id);
+    const next = !session.isPublic;
+    try {
+      const response = await fetch(`/api/sessions/${session.id}/publish`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isPublic: next }),
+      });
+      if (!response.ok) throw new Error("Failed to update");
+      setSessions((prev) =>
+        prev.map((s) => (s.id === session.id ? { ...s, isPublic: next } : s))
+      );
+    } catch (error) {
+      console.error(error);
+      alert("公開設定の更新に失敗しました。");
+    } finally {
+      setTogglingId(null);
+    }
+  };
+
   if (sessions.length === 0) {
-    return <p className="page-description">保存済みセッションはまだありません。</p>;
+    return <p className="home-placeholder">保存済みセッションはまだありません。</p>;
   }
 
   return (
@@ -57,6 +78,26 @@ export function SessionList({ initialSessions }: { initialSessions: SessionSumma
               更新: {new Date(session.updatedAt).toLocaleString("ja-JP")}
             </span>
           </Link>
+
+          <label
+            className="toggle-label"
+            title={session.isPublic ? "公開中（クリックで非公開）" : "非公開（クリックで公開）"}
+          >
+            <input
+              type="checkbox"
+              className="toggle-input"
+              checked={session.isPublic}
+              disabled={togglingId === session.id}
+              onChange={() => void handleTogglePublic(session)}
+            />
+            <span className="toggle-track">
+              <span className="toggle-thumb" />
+            </span>
+            <span className="toggle-text">
+              {session.isPublic ? "公開" : "非公開"}
+            </span>
+          </label>
+
           <button
             type="button"
             className="session-delete-button"

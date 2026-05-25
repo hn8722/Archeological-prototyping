@@ -45,6 +45,7 @@ type DiagramNode = {
   nodeId: string;
   label: string;
   status: EntryStatus;
+  decade: string | null;
   color: string;
   isSelected: boolean;
   position: {
@@ -202,6 +203,7 @@ export function CenterGraph() {
           nodeId: templateNode.id,
           label: nodeEntry.label,
           status: nodeEntry.status,
+          decade: getUxNodeDecade(nodeEntry.label, nodeEntry.fieldEntries),
           color: templateNode.color,
           isSelected,
           position,
@@ -467,6 +469,7 @@ export function CenterGraph() {
                 }
               >
                 <strong>{node.label}</strong>
+                {node.decade && <span className="ap-node-decade">{node.decade}</span>}
                 <span className="ap-hover-tooltip" aria-hidden="true">
                   {" "}
                 </span>
@@ -477,4 +480,15 @@ export function CenterGraph() {
       </div>
     </section>
   );
+}
+
+function getUxNodeDecade(label: string, fieldEntries: Record<string, string>[]) {
+  if (label !== "日常の空間とユーザー体験") return null;
+
+  const latestDecade = [...fieldEntries]
+    .reverse()
+    .map((entry) => entry.when?.trim())
+    .find((value): value is string => Boolean(value && /^\d{4}年代$/.test(value)));
+
+  return latestDecade ?? null;
 }
