@@ -16,7 +16,6 @@ export default function StoryPage({
   const [story, setStory] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
-  const [saveMessage, setSaveMessage] = useState("");
 
   useEffect(() => {
     if (sessionFromStore?.id === id) {
@@ -58,7 +57,6 @@ export default function StoryPage({
   const handleGenerate = async () => {
     setIsGenerating(true);
     setErrorMessage("");
-    setSaveMessage("");
 
     try {
       if (session) {
@@ -86,7 +84,6 @@ export default function StoryPage({
       }
 
       setStory(data.story);
-      setSaveMessage("生成された小説は自動保存されました。");
     } catch (error) {
       console.error(error);
       setErrorMessage("小説生成に失敗しました。OPENAI_API_KEY も確認してください。");
@@ -97,8 +94,8 @@ export default function StoryPage({
 
   return (
     <div className="page-container">
-      <h1 className="page-title">小説生成結果</h1>
-      <p className="page-description">セッションID: {id}</p>
+      <h1 className="page-title">小説生成</h1>
+
       <p className="page-description">セッション名: {session?.name ?? "未取得"}</p>
 
       <div className="story-box">
@@ -106,7 +103,6 @@ export default function StoryPage({
       </div>
 
       {errorMessage && <p className="page-description">{errorMessage}</p>}
-      {saveMessage && <p className="page-description">{saveMessage}</p>}
 
       <div className="horizontal-actions">
         <Link href={`/session/${id}`} className="button-secondary">

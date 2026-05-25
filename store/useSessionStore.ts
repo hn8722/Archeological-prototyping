@@ -8,6 +8,7 @@ import {
   SelectedTarget,
   SessionModel,
 } from "@/lib/types/ap";
+import { combineFields, areAllFieldsFilled } from "@/lib/templates/fieldSchema";
 
 type SessionStore = {
   session: SessionModel | null;
@@ -17,7 +18,7 @@ type SessionStore = {
   setSession: (session: SessionModel) => void;
   selectTarget: (target: SelectedTarget) => void;
   setActiveGeneration: (generation: number) => void;
-  updateNodeText: (generationIndex: number, nodeId: string, text: string) => void;
+  updateNodeFields: (generationIndex: number, nodeId: string, fields: Record<string, string>) => void;
   updateEdgeText: (generationIndex: number, edgeId: string, text: string) => void;
 };
 
@@ -62,7 +63,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
         : null,
     })),
 
-  updateNodeText: (generationIndex, nodeId, text) =>
+  updateNodeFields: (generationIndex: number, nodeId: string, fields: Record<string, string>) =>
     set((state) => {
       if (!state.session) return state;
 
@@ -72,11 +73,13 @@ export const useSessionStore = create<SessionStore>((set) => ({
         const currentNode = generation.nodes[nodeId];
         if (!currentNode) return generation;
 
-        const nextStatus: EntryStatus = text.trim() ? "filled" : "empty";
+        const combinedText = combineFields(currentNode.label, fields);
+        const nextStatus: EntryStatus = areAllFieldsFilled(currentNode.label, fields) ? "filled" : "empty";
 
         const updatedNode: NodeEntry = {
           ...currentNode,
-          text,
+          fields,
+          text: combinedText || null,
           status: nextStatus,
           isConfirmed: true,
         };

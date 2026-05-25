@@ -4,16 +4,13 @@ import { useEffect, useMemo, useState } from "react";
 import { useSessionStore } from "@/store/useSessionStore";
 import { NodeEntry, EdgeEntry } from "@/lib/types/ap";
 import { AP_CROSS_GENERATION_EDGES } from "@/lib/templates/apTemplate";
+import { getFieldDefs, areAllFieldsFilled } from "@/lib/templates/fieldSchema";
 
 type RelatedItem = {
   kind: "node" | "edge";
   label: string;
   text: string | null;
 };
-
-function unique(values: string[]) {
-  return [...new Set(values)];
-}
 
 const MODEL_DESCRIPTIONS: Record<string, string> = {
   制度:"ある価値観を持った人々が日常的に行う習慣をより円滑に行うために作られる制度や、日常の空間とユーザー体験を構成するビジネスを行う関係者(ビジネスエコシステム)がビジネスをより円滑に行うために作られる制度",
@@ -35,28 +32,6 @@ const MODEL_DESCRIPTIONS: Record<string, string> = {
   製品やサービス:"組織が保有する技術や資源を利用して創造する製品やサービス",
   習慣化:"人々が価値観に基づいて行う日々の活動のうち、習慣として行われるもの",
   パラダイム:"その時代の支配的な技術や資源として、次世代にも影響をもたらすもの",
-};
-
-const MODEL_DISCIPLINES: Record<string, string[]> = {
-  制度: ["政治学", "法学", "公共政策"],
-  "日常の空間とユーザー体験": ["デザイン学", "HCI", "建築・都市計画"],
-  前衛的社会問題: ["社会学", "文化研究", "批評理論"],
-  社会問題: ["社会政策", "社会学", "公共政策"],
-  "技術や資源": ["技術経営", "情報学", "イノベーション研究"],
-  人々の価値観: ["心理学", "文化人類学", "倫理学"],
-  ビジネスエコシステム: ["経営学", "産業組織論"],
-  アート: ["芸術学", "表象文化論"],
-  メディア: ["メディア論", "情報社会学"],
-  コミュニティ化: ["コミュニティ研究", "社会関係資本論"],
-  組織化: ["組織論", "経営学"],
-  コミュニケーション: ["コミュニケーション論", "メディア論"],
-  文化芸術振興: ["文化政策", "アートマネジメント"],
-  標準化: ["標準化研究", "制度論"],
-  意味付け: ["記号論", "消費者行動論"],
-  "製品・サービス": ["サービスデザイン", "プロダクト開発"],
-  製品やサービス: ["サービスデザイン", "プロダクト開発"],
-  習慣化: ["行動科学", "心理学"],
-  パラダイム: ["科学技術社会論", "イノベーション研究"],
 };
 
 const MODEL_HINTS: Record<string, string> = {
@@ -106,7 +81,6 @@ function getNormalizedText(text: string | null) {
 
 function dedupeRelatedItems(items: RelatedItem[]) {
   const seen = new Set<string>();
-
   return items.filter((item) => {
     const key = `${item.kind}:${item.label}`;
     if (seen.has(key)) return false;
@@ -122,46 +96,32 @@ function getFilledRelatedItems(items: RelatedItem[]) {
 export function RightPanel() {
   const session = useSessionStore((state) => state.session);
   const selectedTarget = useSessionStore((state) => state.selectedTarget);
-  const updateNodeText = useSessionStore((state) => state.updateNodeText);
+  const updateNodeFields = useSessionStore((state) => state.updateNodeFields);
   const updateEdgeText = useSessionStore((state) => state.updateEdgeText);
 
   const selectedEntry = useMemo((): NodeEntry | EdgeEntry | null => {
     if (!session || !selectedTarget) return null;
-
     const generation = session.generations.find(
       (g) => g.generationIndex === selectedTarget.generation
     );
     if (!generation) return null;
-
-    if (selectedTarget.kind === "node") {
-      return generation.nodes[selectedTarget.id] ?? null;
-    }
-
+    if (selectedTarget.kind === "node") return generation.nodes[selectedTarget.id] ?? null;
     return generation.edges[selectedTarget.id] ?? null;
   }, [session, selectedTarget]);
 
   const relatedModels = useMemo(() => {
-    if (!session || !selectedTarget) {
-      return {
-        affectedNodes: [] as RelatedItem[],
-        affectedEdges: [] as RelatedItem[],
-        affectingNodes: [] as RelatedItem[],
-        affectingEdges: [] as RelatedItem[],
-      };
-    }
+    const empty = {
+      affectedNodes: [] as RelatedItem[],
+      affectedEdges: [] as RelatedItem[],
+      affectingNodes: [] as RelatedItem[],
+      affectingEdges: [] as RelatedItem[],
+    };
+    if (!session || !selectedTarget) return empty;
 
     const generation = session.generations.find(
       (item) => item.generationIndex === selectedTarget.generation
     );
-
-    if (!generation) {
-      return {
-        affectedNodes: [] as RelatedItem[],
-        affectedEdges: [] as RelatedItem[],
-        affectingNodes: [] as RelatedItem[],
-        affectingEdges: [] as RelatedItem[],
-      };
-    }
+    if (!generation) return empty;
 
     const edges = Object.values(generation.edges);
     const nodes = generation.nodes;
@@ -190,42 +150,20 @@ export function RightPanel() {
           incomingCurrent
             .map((edge) => {
               const node = nodes[edge.source];
-              return node
-                ? {
-                    kind: "node" as const,
-                    label: node.label,
-                    text: getNormalizedText(node.text),
-                  }
-                : null;
+              return node ? { kind: "node" as const, label: node.label, text: getNormalizedText(node.text) } : null;
             })
             .concat(
               incomingPrevious.map((edge) => {
                 const node = previousGeneration?.nodes[edge.source];
-                return node
-                  ? {
-                      kind: "node" as const,
-                      label: node.label,
-                      text: getNormalizedText(node.text),
-                    }
-                  : null;
+                return node ? { kind: "node" as const, label: node.label, text: getNormalizedText(node.text) } : null;
               })
             )
             .filter(Boolean) as RelatedItem[]
         ),
         affectedEdges: dedupeRelatedItems(
           incomingCurrent
-            .map((edge) => ({
-              kind: "edge" as const,
-              label: edge.label,
-              text: getNormalizedText(edge.text),
-            }))
-            .concat(
-              incomingPrevious.map((edge) => ({
-                kind: "edge" as const,
-                label: edge.label,
-                text: getNormalizedText(edge.text),
-              }))
-            )
+            .map((edge) => ({ kind: "edge" as const, label: edge.label, text: getNormalizedText(edge.text) }))
+            .concat(incomingPrevious.map((edge) => ({ kind: "edge" as const, label: edge.label, text: getNormalizedText(edge.text) })))
         ),
         affectingNodes: dedupeRelatedItems(
           outgoingCurrent
@@ -233,120 +171,64 @@ export function RightPanel() {
               const node = crossGenerationEdgeIds.has(edge.templateId)
                 ? nextGeneration?.nodes[edge.target]
                 : nodes[edge.target];
-
-              return node
-                ? {
-                    kind: "node" as const,
-                    label: node.label,
-                    text: getNormalizedText(node.text),
-                  }
-                : null;
+              return node ? { kind: "node" as const, label: node.label, text: getNormalizedText(node.text) } : null;
             })
             .filter(Boolean) as RelatedItem[]
         ),
         affectingEdges: dedupeRelatedItems(
-          outgoingCurrent.map((edge) => ({
-            kind: "edge" as const,
-            label: edge.label,
-            text: getNormalizedText(edge.text),
-          }))
+          outgoingCurrent.map((edge) => ({ kind: "edge" as const, label: edge.label, text: getNormalizedText(edge.text) }))
         ),
       };
     }
 
-    const edge = generation.edges[selectedTarget.id];
-
-    if (!edge) {
-      return {
-        affectedNodes: [] as RelatedItem[],
-        affectedEdges: [] as RelatedItem[],
-        affectingNodes: [] as RelatedItem[],
-        affectingEdges: [] as RelatedItem[],
-      };
-    }
-
-    return {
-      affectedNodes: [] as RelatedItem[],
-      affectedEdges: [] as RelatedItem[],
-      affectingNodes: [] as RelatedItem[],
-      affectingEdges: [] as RelatedItem[],
-    };
+    return empty;
   }, [session, selectedTarget]);
 
-  const [inputValue, setInputValue] = useState("");
+  const [localFields, setLocalFields] = useState<Record<string, string>>({});
   const [isEditingConfirmedEntry, setIsEditingConfirmedEntry] = useState(false);
-  const [isAssisting, setIsAssisting] = useState(false);
 
   useEffect(() => {
-    if (selectedEntry?.text) {
-      setInputValue(selectedEntry.text);
-    } else {
-      setInputValue("");
-    }
-
+    setLocalFields(selectedEntry?.fields ?? {});
     setIsEditingConfirmedEntry(false);
   }, [selectedEntry]);
+
+  const fieldDefs = selectedEntry ? getFieldDefs(selectedEntry.label) : [];
+  const hasFieldSchema = fieldDefs.length > 0;
+
+  const handleFieldChange = (key: string, value: string) => {
+    setLocalFields((prev) => ({ ...prev, [key]: value }));
+  };
 
   const handleConfirm = () => {
     if (!selectedTarget) return;
 
     if (selectedTarget.kind === "node") {
-      updateNodeText(selectedTarget.generation, selectedTarget.id, inputValue);
-      setIsEditingConfirmedEntry(false);
-      return;
+      updateNodeFields(selectedTarget.generation, selectedTarget.id, localFields);
+    } else {
+      updateEdgeText(selectedTarget.generation, selectedTarget.id, localFields["_text"] ?? "");
     }
-
-    updateEdgeText(selectedTarget.generation, selectedTarget.id, inputValue);
     setIsEditingConfirmedEntry(false);
-  };
-
-  const handleAssist = async () => {
-    if (!selectedEntry) return;
-
-    setIsAssisting(true);
-
-    try {
-      const response = await fetch("/api/ai/assist", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          label: selectedEntry.label,
-          description: MODEL_DESCRIPTIONS[selectedEntry.label] ?? null,
-          hint: MODEL_HINTS[selectedEntry.label] ?? null,
-          currentText: inputValue,
-          affected: [...filledAffectedNodes, ...filledAffectedEdges],
-          affecting: [...filledAffectingNodes, ...filledAffectingEdges],
-        }),
-      });
-
-      const data = (await response.json()) as { suggestion?: string; error?: string };
-
-      if (!response.ok || !data.suggestion) {
-        throw new Error(data.error || "Failed to get AI suggestion");
-      }
-
-      setInputValue(data.suggestion);
-      setIsEditingConfirmedEntry(true);
-    } catch (error) {
-      console.error(error);
-      alert("AIアシストの取得に失敗しました。");
-    } finally {
-      setIsAssisting(false);
-    }
   };
 
   const isLocked = false;
   const isConfirmed = selectedEntry?.isConfirmed ?? false;
   const canEdit = !isLocked && (!isConfirmed || isEditingConfirmedEntry);
-  const inputLength = inputValue.trim().length;
-  const canConfirm = canEdit && inputLength > 0;
+
+  const canConfirm = canEdit && (
+    hasFieldSchema
+      ? areAllFieldsFilled(selectedEntry?.label ?? "", localFields)
+      : Boolean(localFields["_text"]?.trim())
+  );
+
+  const filledCount = hasFieldSchema
+    ? fieldDefs.filter((def) => localFields[def.key]?.trim()).length
+    : 0;
+
   const showEditor = !isConfirmed || isEditingConfirmedEntry;
+
   const modelDescription =
     (selectedEntry && MODEL_DESCRIPTIONS[selectedEntry.label]) ||
     "このモデルが示す対象や関係について、具体的な観察や解釈を書きます。";
-  const relatedDisciplines = selectedEntry ? MODEL_DISCIPLINES[selectedEntry.label] ?? [] : [];
   const modelHint = selectedEntry ? MODEL_HINTS[selectedEntry.label] : null;
   const filledAffectedNodes = getFilledRelatedItems(relatedModels.affectedNodes);
   const filledAffectedEdges = getFilledRelatedItems(relatedModels.affectedEdges);
@@ -366,9 +248,7 @@ export function RightPanel() {
             <p className="selected-model-description">{modelDescription}</p>
             {modelHint && (
               <div className="selected-model-hint">
-                <span className="selected-model-hint-mark" aria-hidden="true">
-                  ?
-                </span>
+                <span className="selected-model-hint-mark" aria-hidden="true">?</span>
                 <p className="selected-model-hint-text">{modelHint}</p>
               </div>
             )}
@@ -377,137 +257,129 @@ export function RightPanel() {
           <label className="form-label">関連するもの</label>
           {selectedTarget.kind === "node" ? (
             <div className="related-model-layout">
-            <div className="sub-box related-model-group-card">
-              <p className="related-model-title">影響を受けるモデル</p>
-              {filledAffectedNodes.length > 0 || filledAffectedEdges.length > 0 ? (
-                <>
-                  {filledAffectedNodes.length > 0 && (
-                    <div className="related-model-subgroup">
-                      <p className="related-model-subtitle">ノード</p>
-                      <div className="related-model-card-list">
-                        {filledAffectedNodes.map((item) => (
-                          <article key={`affected-node-${item.label}`} className="related-model-card">
-                            <p className="related-model-card-name">{item.label}</p>
-                            <p className="related-model-card-text">
-                              {item.text || "入力はまだありません。"}
-                            </p>
-                          </article>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {filledAffectedEdges.length > 0 && (
-                    <div className="related-model-subgroup">
-                      <p className="related-model-subtitle">エッジ</p>
-                      <div className="related-model-card-list">
-                        {filledAffectedEdges.map((item) => (
-                          <article key={`affected-edge-${item.label}`} className="related-model-card">
-                            <p className="related-model-card-name">{item.label}</p>
-                            <p className="related-model-card-text">
-                              {item.text || "入力はまだありません。"}
-                            </p>
-                          </article>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <p className="related-model-empty">該当するモデルはまだありません。</p>
-              )}
-            </div>
-
-            <div className="sub-box related-model-group-card">
-              <p className="related-model-title">影響を与えるモデル</p>
-              {filledAffectingNodes.length > 0 || filledAffectingEdges.length > 0 ? (
-                <>
-                  {filledAffectingNodes.length > 0 && (
-                    <div className="related-model-subgroup">
-                      <p className="related-model-subtitle">ノード</p>
-                      <div className="related-model-card-list">
-                        {filledAffectingNodes.map((item) => (
-                          <article key={`affecting-node-${item.label}`} className="related-model-card">
-                            <p className="related-model-card-name">{item.label}</p>
-                            <p className="related-model-card-text">
-                              {item.text || "入力はまだありません。"}
-                            </p>
-                          </article>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {filledAffectingEdges.length > 0 && (
-                    <div className="related-model-subgroup">
-                      <p className="related-model-subtitle">エッジ</p>
-                      <div className="related-model-card-list">
-                        {filledAffectingEdges.map((item) => (
-                          <article key={`affecting-edge-${item.label}`} className="related-model-card">
-                            <p className="related-model-card-name">{item.label}</p>
-                            <p className="related-model-card-text">
-                              {item.text || "入力はまだありません。"}
-                            </p>
-                          </article>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <p className="related-model-empty">該当するモデルはまだありません。</p>
-              )}
-            </div>
-
-            <div className="sub-box related-model-group-card">
-              <p className="related-model-title">関連する学問</p>
-              {relatedDisciplines.length > 0 ? (
-                <div className="related-model-list">
-                  {relatedDisciplines.map((label) => (
-                    <span key={`discipline-${label}`} className="related-model-chip">
-                      {label}
-                    </span>
-                  ))}
-                </div>
-              ) : (
-                <p className="related-model-empty">関連する学問はまだ設定されていません。</p>
-              )}
-            </div>
-            </div>
-          ) : (
-            <div className="related-model-layout related-model-layout-single">
               <div className="sub-box related-model-group-card">
-                <p className="related-model-title">関連する学問</p>
-                {relatedDisciplines.length > 0 ? (
-                  <div className="related-model-list">
-                    {relatedDisciplines.map((label) => (
-                      <span key={`discipline-${label}`} className="related-model-chip">
-                        {label}
-                      </span>
-                    ))}
-                  </div>
+                <p className="related-model-title">影響を受けるモデル</p>
+                {filledAffectedNodes.length > 0 || filledAffectedEdges.length > 0 ? (
+                  <>
+                    {filledAffectedNodes.length > 0 && (
+                      <div className="related-model-subgroup">
+                        <p className="related-model-subtitle">ノード</p>
+                        <div className="related-model-card-list">
+                          {filledAffectedNodes.map((item) => (
+                            <article key={`affected-node-${item.label}`} className="related-model-card">
+                              <p className="related-model-card-name">{item.label}</p>
+                              <p className="related-model-card-text">{item.text || "入力はまだありません。"}</p>
+                            </article>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {filledAffectedEdges.length > 0 && (
+                      <div className="related-model-subgroup">
+                        <p className="related-model-subtitle">エッジ</p>
+                        <div className="related-model-card-list">
+                          {filledAffectedEdges.map((item) => (
+                            <article key={`affected-edge-${item.label}`} className="related-model-card">
+                              <p className="related-model-card-name">{item.label}</p>
+                              <p className="related-model-card-text">{item.text || "入力はまだありません。"}</p>
+                            </article>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
                 ) : (
-                  <p className="related-model-empty">関連する学問はまだ設定されていません。</p>
+                  <p className="related-model-empty">該当するモデルはまだありません。</p>
+                )}
+              </div>
+
+              <div className="sub-box related-model-group-card">
+                <p className="related-model-title">影響を与えるモデル</p>
+                {filledAffectingNodes.length > 0 || filledAffectingEdges.length > 0 ? (
+                  <>
+                    {filledAffectingNodes.length > 0 && (
+                      <div className="related-model-subgroup">
+                        <p className="related-model-subtitle">ノード</p>
+                        <div className="related-model-card-list">
+                          {filledAffectingNodes.map((item) => (
+                            <article key={`affecting-node-${item.label}`} className="related-model-card">
+                              <p className="related-model-card-name">{item.label}</p>
+                              <p className="related-model-card-text">{item.text || "入力はまだありません。"}</p>
+                            </article>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {filledAffectingEdges.length > 0 && (
+                      <div className="related-model-subgroup">
+                        <p className="related-model-subtitle">エッジ</p>
+                        <div className="related-model-card-list">
+                          {filledAffectingEdges.map((item) => (
+                            <article key={`affecting-edge-${item.label}`} className="related-model-card">
+                              <p className="related-model-card-name">{item.label}</p>
+                              <p className="related-model-card-text">{item.text || "入力はまだありません。"}</p>
+                            </article>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <p className="related-model-empty">該当するモデルはまだありません。</p>
                 )}
               </div>
             </div>
-          )}
+          ) : null}
 
           <div className={`editor-stage ${showEditor ? "editor-stage-open" : "editor-stage-closed"}`}>
             <label className="form-label">入力欄</label>
-            <textarea
-              className="form-textarea"
-              value={inputValue}
-              disabled={!canEdit}
-              onChange={(e) => setInputValue(e.target.value)}
-              placeholder="ここに内容を入力"
-            />
+
+            {hasFieldSchema ? (
+              <div className="field-editor">
+                {fieldDefs.map((def) => {
+                  const value = localFields[def.key] ?? "";
+                  const isFilled = Boolean(value.trim());
+                  return (
+                    <div key={def.key} className="field-group">
+                      <div className="field-label-row">
+                        <span className="field-label">{def.label}</span>
+                        {isFilled && (
+                          <span className="field-check-icon" aria-label="入力済み">✓</span>
+                        )}
+                      </div>
+                      <textarea
+                        className="field-input"
+                        value={value}
+                        disabled={!canEdit}
+                        onChange={(e) => handleFieldChange(def.key, e.target.value)}
+                        placeholder={def.label}
+                        rows={2}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <textarea
+                className="form-textarea"
+                value={localFields["_text"] ?? ""}
+                disabled={!canEdit}
+                onChange={(e) => handleFieldChange("_text", e.target.value)}
+                placeholder="ここに内容を入力"
+              />
+            )}
           </div>
 
           <p className={`input-guide ${canConfirm ? "input-guide-ready" : ""}`}>
             {isConfirmed && !isEditingConfirmedEntry
               ? ""
+              : hasFieldSchema
+              ? canConfirm
+                ? "すべての項目が入力されました。入力決定できます。"
+                : `${filledCount} / ${fieldDefs.length} 項目入力済み`
               : canConfirm
-              ? `入力文字数: ${inputLength}文字。入力決定できます。`
-              : `入力文字数: ${inputLength}文字。入力すると入力決定できます。`}
+              ? "入力決定できます。"
+              : "内容を入力してください。"}
           </p>
 
           {isConfirmed && !isEditingConfirmedEntry && (
@@ -521,11 +393,7 @@ export function RightPanel() {
                     aria-label="入力内容を編集"
                     title="編集"
                   >
-                    <svg
-                      className="confirmed-edit-icon"
-                      viewBox="0 0 24 24"
-                      aria-hidden="true"
-                    >
+                    <svg className="confirmed-edit-icon" viewBox="0 0 24 24" aria-hidden="true">
                       <path
                         d="M4 17.25V20h2.75L17.8 8.95l-2.75-2.75L4 17.25zm15.71-9.04a1 1 0 0 0 0-1.41l-2.5-2.5a1 1 0 0 0-1.41 0l-1.17 1.17 3.91 3.91 1.17-1.17z"
                         fill="currentColor"
@@ -534,7 +402,18 @@ export function RightPanel() {
                   </button>
                 )}
               </div>
-              <p className="confirmed-preview-text">{selectedEntry?.text || "内容はありません"}</p>
+              {hasFieldSchema ? (
+                <div className="confirmed-fields">
+                  {fieldDefs.map((def) => (
+                    <div key={def.key} className="confirmed-field">
+                      <span className="confirmed-field-label">{def.label}</span>
+                      <p className="confirmed-field-value">{localFields[def.key] || "—"}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="confirmed-preview-text">{selectedEntry?.text || "内容はありません"}</p>
+              )}
             </div>
           )}
 
@@ -548,9 +427,7 @@ export function RightPanel() {
                 {isEditingConfirmedEntry ? "修正" : "入力決定"}
               </button>
             )}
-            <button className="button-secondary" onClick={handleAssist} disabled={isAssisting}>
-              {isAssisting ? "AI生成中..." : "AIアシスト"}
-            </button>
+            <button className="button-secondary">AIアシスト</button>
           </div>
         </>
       )}

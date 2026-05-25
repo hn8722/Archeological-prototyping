@@ -14,6 +14,7 @@ function createGeneration(generationIndex: number): GenerationModel {
       templateId: node.id,
       label: node.label,
       text: null,
+      fields: {},
       status: "empty",
       isConfirmed: false,
     };
@@ -26,6 +27,7 @@ function createGeneration(generationIndex: number): GenerationModel {
       target: edge.target,
       label: edge.label,
       text: null,
+      fields: {},
       status: "empty",
       isConfirmed: false,
     };
@@ -39,6 +41,7 @@ function createGeneration(generationIndex: number): GenerationModel {
         target: edge.target,
         label: edge.label,
         text: null,
+        fields: {},
         status: "empty",
         isConfirmed: false,
       };

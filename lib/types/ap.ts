@@ -4,6 +4,7 @@ export type NodeEntry = {
   templateId: string;
   label: string;
   text: string | null;
+  fields: Record<string, string>;
   status: EntryStatus;
   isConfirmed: boolean;
 };
@@ -14,6 +15,7 @@ export type EdgeEntry = {
   target: string;
   label: string;
   text: string | null;
+  fields: Record<string, string>;
   status: EntryStatus;
   isConfirmed: boolean;
 };

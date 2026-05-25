@@ -121,11 +121,11 @@ function getNodeAnchorPoint(
   };
 }
 
-function getNodeAppearance(status: EntryStatus, color: string, isSelected: boolean) {
+function getNodeAppearance(status: EntryStatus, isSelected: boolean) {
   return {
-    background: status === "filled" ? color : "#eef1f4",
+    background: status !== "filled" ? "#eef1f4" : undefined,
     borderColor:
-      status === "error" ? "#d92d20" : isSelected ? "#111111" : "#a8afb8",
+      status === "error" ? "#d92d20" : isSelected ? "#111111" : status !== "filled" ? "#a8afb8" : undefined,
     opacity: status === "empty" ? 0.78 : 1,
     boxShadow: isSelected ? "0 0 0 3px rgba(17, 17, 17, 0.12)" : "none",
   };
@@ -133,7 +133,7 @@ function getNodeAppearance(status: EntryStatus, color: string, isSelected: boole
 
 function getLineAppearance(status: EntryStatus, isSelected: boolean) {
   return {
-    stroke: status === "error" ? "#d92d20" : "#98a2b3",
+    stroke: status === "error" ? "#d92d20" : status === "filled" ? "#1570ef" : "#98a2b3",
     opacity: status === "empty" ? 0.55 : 1,
     strokeWidth: isSelected ? 3.5 : 2.2,
   };
@@ -327,6 +327,17 @@ export function CenterGraph() {
               >
                 <path d="M 0 0 L 10 5 L 0 10 z" fill="#98a2b3" />
               </marker>
+              <marker
+                id="generation-arrowhead-filled"
+                markerWidth="10"
+                markerHeight="10"
+                refX="8"
+                refY="5"
+                orient="auto"
+                markerUnits="strokeWidth"
+              >
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#1570ef" />
+              </marker>
             </defs>
 
             {graphModel.edges.map((edge) => {
@@ -344,24 +355,28 @@ export function CenterGraph() {
                   opacity={appearance.opacity}
                   strokeLinecap="round"
                   strokeDasharray={edge.dashed ? "8 8" : undefined}
-                  markerEnd="url(#generation-arrowhead)"
+                  markerEnd={edge.status === "filled" ? "url(#generation-arrowhead-filled)" : "url(#generation-arrowhead)"}
                 />
               );
             })}
 
-            {graphModel.bridges.map((bridge) => (
-              <path
-                key={bridge.id}
-                d={bridge.path}
-                stroke={getLineAppearance(bridge.status, bridge.isSelected).stroke}
-                strokeWidth={getLineAppearance(bridge.status, bridge.isSelected).strokeWidth}
-                opacity={getLineAppearance(bridge.status, bridge.isSelected).opacity}
-                strokeLinecap="round"
-                fill="none"
-                strokeDasharray={bridge.dashed ? "8 8" : undefined}
-                markerEnd="url(#generation-arrowhead)"
-              />
-            ))}
+            {graphModel.bridges.map((bridge) => {
+              const appearance = getLineAppearance(bridge.status, bridge.isSelected);
+
+              return (
+                <path
+                  key={bridge.id}
+                  d={bridge.path}
+                  stroke={appearance.stroke}
+                  strokeWidth={appearance.strokeWidth}
+                  opacity={appearance.opacity}
+                  strokeLinecap="round"
+                  fill="none"
+                  strokeDasharray={bridge.dashed ? "8 8" : undefined}
+                  markerEnd={bridge.status === "filled" ? "url(#generation-arrowhead-filled)" : "url(#generation-arrowhead)"}
+                />
+              );
+            })}
           </svg>
 
           {graphModel.generationIndexes.map((generationIndex, index) => (
@@ -381,7 +396,7 @@ export function CenterGraph() {
             <button
               key={`${bridge.id}-label`}
               type="button"
-              className={`ap-bridge-label ${bridge.isSelected ? "ap-edge-label-selected" : ""}`}
+              className={`ap-bridge-label ${bridge.isSelected ? "ap-edge-label-selected" : ""} ${bridge.status === "filled" ? "ap-edge-label-filled" : ""}`}
               style={{
                 left: `${bridge.labelX - 82}px`,
                 top: `${bridge.labelY - 14}px`,
@@ -405,7 +420,7 @@ export function CenterGraph() {
             <button
               key={`${edge.generationIndex}-${edge.edgeId}-label`}
               type="button"
-              className={`ap-edge-label ${edge.isSelected ? "ap-edge-label-selected" : ""}`}
+              className={`ap-edge-label ${edge.isSelected ? "ap-edge-label-selected" : ""} ${edge.status === "filled" ? "ap-edge-label-filled" : ""}`}
               style={{
                 left: `${edge.labelX - EDGE_LABEL_WIDTH / 2}px`,
                 top: `${edge.labelY - EDGE_LABEL_HEIGHT / 2}px`,
@@ -428,13 +443,13 @@ export function CenterGraph() {
           {graphModel.nodes.map((node) => {
             if (!node.position) return null;
 
-            const appearance = getNodeAppearance(node.status, node.color, node.isSelected);
+            const appearance = getNodeAppearance(node.status, node.isSelected);
 
             return (
               <button
                 key={`${node.generationIndex}-${node.nodeId}`}
                 type="button"
-                className={`ap-node-card ${node.isSelected ? "ap-node-card-selected" : ""}`}
+                className={`ap-node-card ${node.isSelected ? "ap-node-card-selected" : ""} ${node.status === "filled" ? "ap-node-card-filled" : ""} ${node.generationIndex === 2 && node.nodeId === "n3" && node.status !== "filled" ? "ap-node-guide-pulse" : ""}`}
                 style={{
                   left: `${node.position.left}px`,
                   top: `${node.position.top}px`,

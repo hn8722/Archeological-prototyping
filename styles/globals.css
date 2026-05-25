@@ -193,6 +193,91 @@ a {
   resize: vertical;
 }
 
+/* フィールド入力 */
+.field-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.field-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #344054;
+}
+
+.field-check-icon {
+  font-size: 13px;
+  font-weight: bold;
+  color: #1570ef;
+}
+
+.field-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.45;
+  resize: vertical;
+  background: #fff;
+  color: #14202b;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.field-input:focus {
+  outline: none;
+  border-color: #1570ef;
+  box-shadow: 0 0 0 3px rgba(21, 112, 239, 0.1);
+}
+
+.field-input:disabled {
+  background: #f9fafb;
+  color: #667085;
+  cursor: not-allowed;
+}
+
+/* 確定後のフィールドプレビュー */
+.confirmed-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.confirmed-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.confirmed-field-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: #98a2b3;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.confirmed-field-value {
+  font-size: 13px;
+  color: #14202b;
+  line-height: 1.45;
+  margin: 0;
+}
+
 .session-list {
   display: flex;
   flex-direction: column;
@@ -684,6 +769,28 @@ a {
 .ap-bridge-label.ap-edge-label-selected {
   border-color: #111;
   box-shadow: 0 0 0 3px rgba(17, 17, 17, 0.08);
+}
+
+.ap-node-card.ap-node-card-filled,
+.ap-edge-label.ap-edge-label-filled,
+.ap-bridge-label.ap-edge-label-filled {
+  background: rgba(21, 112, 239, 0.1);
+  border-color: #7dacef;
+  color: #527cbc;
+}
+
+@keyframes guide-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(21, 112, 239, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 0 10px rgba(21, 112, 239, 0);
+  }
+}
+
+.ap-node-guide-pulse {
+  animation: guide-pulse 2s ease-in-out infinite;
+  border-color: #1570ef !important;
 }
 
 .generation-tabs {
