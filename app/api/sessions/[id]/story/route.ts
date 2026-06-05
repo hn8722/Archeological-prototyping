@@ -3,6 +3,8 @@ import { getOpenAIClient, getOpenAIModel } from "@/lib/server/openai";
 import { AP_CROSS_GENERATION_EDGES } from "@/lib/templates/apTemplate";
 import { SessionModel } from "@/lib/types/ap";
 import {
+  canWriteSession,
+  canUseSessionAi,
   canReadSession,
   getSessionRecord,
   saveStoryDraft,
@@ -39,14 +41,6 @@ type StoryGraph = {
   generations: number[];
   nodes: StoryGraphNode[];
   edges: StoryGraphEdge[];
-  modelChanges: {
-    templateId: string;
-    label: string;
-    generations: {
-      generation: number;
-      text: string | null;
-    }[];
-  }[];
 };
 
 type StoryParams = {
@@ -56,11 +50,35 @@ type StoryParams = {
   characterNote?: string;
 };
 
+type SelectedPersona = {
+  key: string;
+  generation: number;
+  entryIndex: number;
+  text: string;
+  fields?: Record<string, string>;
+};
+
 type StoryRequestBody = {
   params?: StoryParams;
-  action?: "preview" | "generate";
+  action?: "preview" | "generate" | "save";
   scenarioPlan?: string;
+  story?: string;
+  model?: string;
+  selectedPersonas?: SelectedPersona[];
 };
+
+type GenerationStory = {
+  generation: number;
+  title: string;
+  text: string;
+  carryover?: string;
+};
+
+const AP_DEFINITION_TEXT = [
+  "AP（Archeological Prototyping）は、制度、日常の空間とユーザー体験、前衛的社会問題、社会の目標、技術や資源、ペルソナの6つのオブジェクトと、それらを変換する矢印から社会変化を読むモデルです。",
+  "同世代の矢印は同じ時代内の変換を示し、世代をまたぐ矢印は過去から未来への影響や変化を示します。",
+  "小説ではAP用語を説明するのではなく、APの関係を人物の行動、場面、葛藤、選択として描きます。",
+].join("\n");
 
 export async function POST(
   request: Request,
@@ -76,25 +94,49 @@ export async function POST(
     if (!access.allowed) {
       return NextResponse.json({ error: "このセッションで小説生成する権限がありません。" }, { status: 403 });
     }
+
     const session = await getSessionRecord(id);
     if (!session) {
       return NextResponse.json({ error: "セッションが見つかりません。" }, { status: 404 });
     }
 
-    const body = await request.json().catch(() => ({})) as StoryRequestBody;
+    const body = (await request.json().catch(() => ({}))) as StoryRequestBody;
     const storyParams: StoryParams = body.params ?? {};
     const action = body.action ?? "generate";
+    const model = getOpenAIModel();
+
+    if (action === "save") {
+      const writeAccess = await canWriteSession(id, user?.id, user?.email);
+      if (!writeAccess.allowed) {
+        return NextResponse.json({ error: "このセッションに小説を保存する権限がありません。" }, { status: 403 });
+      }
+
+      const storyToSave = body.story?.trim();
+      if (!storyToSave) {
+        return NextResponse.json({ error: "保存する小説本文が必要です。" }, { status: 400 });
+      }
+
+      const draft = await saveStoryDraft(session.id, storyToSave, body.model ?? model);
+      return NextResponse.json({ storyDraft: { id: draft.id, createdAt: draft.createdAt } });
+    }
+
+    const selectedPersonas = body.selectedPersonas ?? [];
+    if (selectedPersonas.length === 0) {
+      return NextResponse.json({ error: "小説生成に使うペルソナを選択してください。" }, { status: 400 });
+    }
+
+    const aiAccess = await canUseSessionAi(id, user?.id, user?.email);
+    if (!aiAccess.allowed) {
+      return NextResponse.json({ error: "このセッションではAI利用が停止されています。" }, { status: 403 });
+    }
 
     const client = getOpenAIClient();
-    const model = getOpenAIModel();
     const storyGraph = buildStoryGraph(session);
-
-    let scenarioPlan = body.scenarioPlan;
 
     if (action === "preview") {
       const scenarioResponse = await client.responses.create({
         model,
-        input: buildScenarioOptionsPrompt(storyGraph, storyParams),
+        input: buildScenarioOptionsPrompt(storyGraph, storyParams, selectedPersonas),
       });
       const previews = normalizeScenarioPreviews(scenarioResponse.output_text);
       if (previews.length === 0) {
@@ -103,29 +145,20 @@ export async function POST(
       return NextResponse.json({ previews, model });
     }
 
-    if (!scenarioPlan) {
-      const scenarioResponse = await client.responses.create({
-        model,
-        input: buildScenarioPrompt(storyGraph, storyParams),
-      });
-      scenarioPlan = normalizeScenarioPlan(scenarioResponse.output_text);
-    }
-
-    const storyResponse = await client.responses.create({
+    const scenarioPlan = body.scenarioPlan ?? "{}";
+    const generationStories = await generateSequentialStories({
+      client,
       model,
-      input: buildStoryPrompt(storyGraph, scenarioPlan, storyParams),
+      storyGraph,
+      scenarioPlan,
+      storyParams,
+      selectedPersonas,
     });
+    const story = generationStories.map((item) => item.text).join("\n\n");
 
-    const generationStories = normalizeGenerationStories(storyResponse.output_text);
-    const story = generationStories.length > 0
-      ? generationStories.map((item) => `第${item.generation}世代: ${item.title}\n${item.text}`).join("\n\n")
-      : storyResponse.output_text?.trim();
-
-    if (!story) {
+    if (!story.trim()) {
       return NextResponse.json({ error: "小説生成結果を取得できませんでした。" }, { status: 502 });
     }
-
-    await saveStoryDraft(session.id, story, model);
 
     return NextResponse.json({ story, generationStories, scenarioPlan, model });
   } catch (error) {
@@ -141,19 +174,16 @@ function getOpenAIErrorMessage(error: unknown, fallback: string) {
   const openAIError = error as { code?: string; status?: number; message?: string };
 
   if (openAIError.code === "billing_hard_limit_reached") {
-    return "OpenAI APIの請求上限に達しています。Billingのhard limitまたは利用上限を引き上げてから再試行してください。";
+    return "OpenAI APIの請求上限に達しています。Billingのhard limitまたは利用上限を確認してください。";
   }
-
   if (openAIError.code === "insufficient_quota") {
-    return "OpenAI APIの利用枠が不足しています。このAPIキーが属するプロジェクトのBilling、Usage limits、支払い設定を確認してください。";
+    return "OpenAI APIの利用枠が不足しています。Billing、usage limits、支払い設定を確認してください。";
   }
-
   if (openAIError.status === 401) {
     return "OPENAI_API_KEYが無効、または期限切れの可能性があります。";
   }
-
   if (openAIError.status === 404 || openAIError.code === "model_not_found") {
-    return "指定したOpenAIモデルが利用できません。OPENAI_MODELの設定、またはアカウントのモデル利用権限を確認してください。";
+    return "指定したOpenAIモデルが利用できません。OPENAI_MODELの設定を確認してください。";
   }
 
   return process.env.NODE_ENV === "development" && openAIError.message
@@ -224,33 +254,11 @@ function buildStoryGraph(session: SessionModel): StoryGraph {
     });
   });
 
-  const nodeTemplateIds = unique(
-    generations.flatMap((generation) =>
-      Object.values(generation.nodes).map((node) => node.templateId)
-    )
-  );
-
-  const modelChanges = nodeTemplateIds.map((templateId) => {
-    const label =
-      generations.map((generation) => generation.nodes[templateId]?.label).find(Boolean) ??
-      templateId;
-
-    return {
-      templateId,
-      label,
-      generations: generations.map((generation) => ({
-        generation: generation.generationIndex,
-        text: getTextOrNull(generation.nodes[templateId]?.text),
-      })),
-    };
-  });
-
   return {
     sessionName: session.name,
     generations: generations.map((generation) => generation.generationIndex),
     nodes,
     edges: [...sameGenerationEdges, ...crossGenerationEdges],
-    modelChanges,
   };
 }
 
@@ -263,206 +271,257 @@ function buildParamInstructions(params: StoryParams): string[] {
   return lines;
 }
 
+function buildPersonasText(personas: SelectedPersona[]) {
+  return personas
+    .map((persona, index) => {
+      const fields = persona.fields
+        ? Object.entries(persona.fields)
+            .filter(([, value]) => value?.trim())
+            .map(([key, value]) => `${key}: ${value}`)
+            .join(" / ")
+        : "";
+      return [
+        `Persona ${index + 1} (世代 ${persona.generation})`,
+        `- summary: ${persona.text}`,
+        fields ? `- fields: ${fields}` : null,
+      ].filter(Boolean).join("\n");
+    })
+    .join("\n\n");
+}
+
 function buildGraphText(storyGraph: StoryGraph): string {
-  const lines: string[] = [];
+  return storyGraph.generations.map((generation) => buildGenerationGraphText(storyGraph, generation, "full")).join("\n\n");
+}
 
-  for (let i = 0; i < storyGraph.generations.length; i++) {
-    const gen = storyGraph.generations[i];
-    const nextGen = storyGraph.generations[i + 1];
+function buildGenerationGraphText(
+  storyGraph: StoryGraph,
+  generation: number,
+  mode: "full" | "generation"
+): string {
+  const lines: string[] = [`【世代 ${generation}】`];
+  const genNodes = storyGraph.nodes.filter((node) => node.generation === generation && node.text);
+  const sameEdges = storyGraph.edges.filter(
+    (edge) => edge.kind === "same_generation" && edge.source.generation === generation && edge.text
+  );
+  const outgoingCrossEdges = storyGraph.edges.filter(
+    (edge) => edge.kind === "cross_generation" && edge.source.generation === generation && edge.text
+  );
 
-    lines.push(`【世代${gen}】`);
-
-    // Nodes
-    const genNodes = storyGraph.nodes.filter((n) => n.generation === gen);
-    lines.push("■ オブジェクト（ノード）");
+  if (genNodes.length > 0) {
+    lines.push("■ オブジェクト");
     for (const node of genNodes) {
-      const content = node.text ? `「${node.text}」` : "（未入力）";
-      lines.push(`  - ${node.label}: ${content}`);
+      lines.push(`- ${node.label}: ${node.text}`);
     }
+  }
 
-    // Same-generation edges
-    const sameEdges = storyGraph.edges.filter(
-      (e) => e.kind === "same_generation" && e.source.generation === gen
-    );
-    if (sameEdges.length > 0) {
-      lines.push("■ 同世代の変換（射）");
-      for (const edge of sameEdges) {
-        const content = edge.text ? ` ／ 補足:「${edge.text}」` : "";
-        lines.push(`  - ${edge.source.label} →[${edge.label}]→ ${edge.target.label}${content}`);
-      }
+  if (sameEdges.length > 0) {
+    lines.push("■ 同世代の変換");
+    for (const edge of sameEdges) {
+      lines.push(`- ${edge.source.label} → [${edge.label}] → ${edge.target.label}: ${edge.text}`);
     }
+  }
 
-    lines.push("");
-
-    // Cross-generation bridge to next generation
-    if (nextGen !== undefined) {
-      const crossEdges = storyGraph.edges.filter(
-        (e) =>
-          e.kind === "cross_generation" &&
-          e.source.generation === gen &&
-          e.target.generation === nextGen
+  if (outgoingCrossEdges.length > 0) {
+    lines.push("■ 次世代への橋渡し");
+    for (const edge of outgoingCrossEdges) {
+      lines.push(
+        `- ${edge.source.label}(世代${edge.source.generation}) → [${edge.label}] → ${edge.target.label}(世代${edge.target.generation}): ${edge.text}`
       );
-      if (crossEdges.length > 0) {
-        lines.push(`【世代${gen} → 世代${nextGen} の橋渡し（時代を超えた影響）】`);
-        for (const edge of crossEdges) {
-          const content = edge.text ? ` ／ 補足:「${edge.text}」` : "";
-          lines.push(
-            `  - ${edge.source.label}（世代${gen}）→[${edge.label}]→ ${edge.target.label}（世代${nextGen}）${content}`
-          );
-        }
-        lines.push("");
-      }
     }
+  }
+
+  if (mode === "generation" && lines.length === 1) {
+    lines.push("入力済みのAP要素はありません。");
   }
 
   return lines.join("\n");
 }
 
-function buildScenarioPrompt(storyGraph: StoryGraph, params: StoryParams) {
-  const paramLines = buildParamInstructions(params);
-  return [
-    "あなたはAPモデルを物語化するための脚本設計者です。",
-    "以下のAP_GRAPHは、時間軸上のAPモデルをグラフ構造で示したものです。",
-    "世代の順番（世代1 → 世代2 → …）は時系列を表します。",
-    "「→[矢印ラベル]→」は必ず左から右への影響・変化として解釈し、逆方向に読まないでください。",
-    "「世代X → 世代Y の橋渡し」は、前の時代から次の時代への継承・変容・断絶を表します。",
-    "APモデルから登場人物や舞台を自然に推測して設定してください。",
-    "未入力（「未入力」と書かれた項目）があっても止めず、入力済みの内容と矢印構造を優先してください。",
-    "出力はJSONだけにしてください。Markdownや説明文は不要です。",
-    ...(paramLines.length > 0 ? ["", "USER_PARAMS（以下の指定を最優先で守ること）:", ...paramLines] : []),
-    "",
-    "JSON_SCHEMA:",
-    JSON.stringify({
-      mainTheme: "string",
-      openingLine: "string（小説の最初の一行。本文生成前にユーザーへ確認する）",
-      setting: {
-        place: "string",
-        time: "string",
-        socialContext: "string",
-      },
-      characters: [
-        {
-          name: "string",
-          role: "string",
-          desire: "string",
-          conflict: "string",
-        },
-      ],
-      generationBeats: [
-        {
-          generation: "number",
-          storyRole: "string（この世代が物語で果たす役割）",
-          keyChange: "string（この世代で起きる最も重要な変化）",
-          scene: "string（代表的な場面描写のヒント）",
-        },
-      ],
-      plotBeats: [
-        {
-          order: "number",
-          sourceLabel: "string（起点モデルのラベル）",
-          arrowLabel: "string（矢印のラベル）",
-          targetLabel: "string（終点モデルのラベル）",
-          event: "string（この矢印が引き起こす出来事・変化）",
-        },
-      ],
-    }),
-    "",
-    "AP_GRAPH:",
-    buildGraphText(storyGraph),
-  ].join("\n");
-}
-
-function buildScenarioOptionsPrompt(storyGraph: StoryGraph, params: StoryParams) {
+function buildScenarioOptionsPrompt(
+  storyGraph: StoryGraph,
+  params: StoryParams,
+  selectedPersonas: SelectedPersona[]
+) {
   const paramLines = buildParamInstructions(params);
   const scenarioSchema = {
     mainTheme: "string",
-    openingLine: "string（小説の最初の一行。本文生成前にユーザーへ確認する）",
-    directionLabel: "string（方向性の短い名前。例: 静かな日常劇、社会派SF、世代継承ドラマ）",
-    directionNote: "string（この案が他の案とどう違うかを1〜2文で説明）",
-    setting: {
-      place: "string",
-      time: "string",
-      socialContext: "string",
-    },
-    characters: [
-      {
-        name: "string",
-        role: "string",
-        desire: "string",
-        conflict: "string",
-      },
-    ],
-    generationBeats: [
-      {
-        generation: "number",
-        storyRole: "string（この世代が物語で果たす役割）",
-        keyChange: "string（この世代で起きる最も重要な変化）",
-        scene: "string（代表的な場面描写のヒント）",
-      },
-    ],
-    plotBeats: [
-      {
-        order: "number",
-        sourceLabel: "string（起点モデルのラベル）",
-        arrowLabel: "string（矢印のラベル）",
-        targetLabel: "string（終点モデルのラベル）",
-        event: "string（この矢印が引き起こす出来事・変化）",
-      },
-    ],
+    openingLine: "string",
+    directionLabel: "string",
+    directionNote: "string",
+    protagonistPolicy: "string",
+    storyArc: "string",
   };
 
   return [
-    "あなたはAPモデルを物語化するための脚本設計者です。",
-    "以下のAP_GRAPHから、互いに明確に違う小説の方向性案を3つ作ってください。",
-    "3案は、テーマ、語り口、主人公/焦点、葛藤の置き方が重複しないようにしてください。",
-    "世代の順番（世代1 → 世代2 → …）は時系列を表します。",
-    "「→[矢印ラベル]→」は必ず左から右への影響・変化として解釈し、逆方向に読まないでください。",
-    "「世代X → 世代Y の橋渡し」は、前の時代から次の時代への継承・変容・断絶を表します。",
-    "未入力（「未入力」と書かれた項目）があっても止めず、入力済みの内容と矢印構造を優先してください。",
-    "出力はJSONだけにしてください。Markdownや説明文は不要です。",
-    ...(paramLines.length > 0 ? ["", "USER_PARAMS（以下の指定を最優先で守ること）:", ...paramLines] : []),
+    "あなたはAPモデルを未来小説に変換する編集者です。",
+    "以下のAP_GRAPHとSELECTED_PERSONASをもとに、互いに異なる小説の方向性案を3つ作ってください。",
+    "小説は、ユーザーが記述した一番過去の世代から最後の未来世代まで、世代ごとに段階的に生成されます。",
+    "方向性案では、どのペルソナをどのような主人公/群像として扱うかを明確にしてください。",
+    "出力はJSONだけにしてください。",
+    ...(paramLines.length > 0 ? ["", "USER_PARAMS:", ...paramLines] : []),
     "",
     "JSON_SCHEMA:",
-    JSON.stringify({
-      options: [scenarioSchema, scenarioSchema, scenarioSchema],
-    }),
+    JSON.stringify({ options: [scenarioSchema, scenarioSchema, scenarioSchema] }),
+    "",
+    "AP_DEFINITION:",
+    AP_DEFINITION_TEXT,
+    "",
+    "SELECTED_PERSONAS:",
+    buildPersonasText(selectedPersonas),
     "",
     "AP_GRAPH:",
     buildGraphText(storyGraph),
   ].join("\n");
 }
 
-function buildStoryPrompt(storyGraph: StoryGraph, scenarioPlan: string, params: StoryParams) {
-  const paramLines = buildParamInstructions(params);
+async function generateSequentialStories({
+  client,
+  model,
+  storyGraph,
+  scenarioPlan,
+  storyParams,
+  selectedPersonas,
+}: {
+  client: ReturnType<typeof getOpenAIClient>;
+  model: string;
+  storyGraph: StoryGraph;
+  scenarioPlan: string;
+  storyParams: StoryParams;
+  selectedPersonas: SelectedPersona[];
+}) {
+  const targetGenerations = getWrittenGenerations(storyGraph);
+  const generations = targetGenerations.length > 0 ? targetGenerations : storyGraph.generations;
+  const generationStories: GenerationStory[] = [];
+  let carryover = "";
+  let previousLastSentence = "";
+
+  for (const generation of generations) {
+    const storyResponse = await client.responses.create({
+      model,
+      input: buildGenerationStoryPrompt({
+        storyGraph,
+        generation,
+        scenarioPlan,
+        storyParams,
+        selectedPersonas,
+        carryover,
+        previousLastSentence,
+      }),
+    });
+
+    const parsedStory = normalizeSingleGenerationStory(storyResponse.output_text, generation);
+    generationStories.push(parsedStory);
+
+    const carryoverResponse = await client.responses.create({
+      model,
+      input: buildCarryoverPrompt({
+        generation,
+        previousCarryover: carryover,
+        storyText: parsedStory.text,
+      }),
+    });
+
+    carryover = normalizeCarryover(carryoverResponse.output_text);
+    previousLastSentence = extractLastSentence(parsedStory.text);
+    generationStories[generationStories.length - 1] = {
+      ...parsedStory,
+      carryover,
+    };
+  }
+
+  return generationStories;
+}
+
+function getWrittenGenerations(storyGraph: StoryGraph) {
+  return storyGraph.generations.filter((generation) => {
+    const hasNode = storyGraph.nodes.some((node) => node.generation === generation && node.text);
+    const hasEdge = storyGraph.edges.some((edge) => edge.source.generation === generation && edge.text);
+    return hasNode || hasEdge;
+  });
+}
+
+function buildGenerationStoryPrompt({
+  storyGraph,
+  generation,
+  scenarioPlan,
+  storyParams,
+  selectedPersonas,
+  carryover,
+  previousLastSentence,
+}: {
+  storyGraph: StoryGraph;
+  generation: number;
+  scenarioPlan: string;
+  storyParams: StoryParams;
+  selectedPersonas: SelectedPersona[];
+  carryover: string;
+  previousLastSentence: string;
+}) {
+  const paramLines = buildParamInstructions(storyParams);
   return [
-    "あなたは短編小説の作家です。",
-    "以下のAP_GRAPHとSCENARIO_PLAN_JSONに基づいて、日本語の短い小説本文を書いてください。",
-    "登場人物、舞台、時代設定はSCENARIO_PLAN_JSONに従ってください。",
-    "AP_GRAPHの矢印「→[ラベル]→」は左から右への影響・変化として扱い、逆方向に解釈しないでください。",
-    "世代の順番は時系列です。第一世代から最後の世代へ、変化・継承・断絶が物語として自然につながるようにしてください。",
-    "「世代X → 世代Y の橋渡し」の射は、時代を超えた影響や転換点として物語に織り込んでください。",
-    "未入力の項目は無理に補完しすぎず、入力済みの内容から推測できる範囲で物語化してください。",
-    "世代ごとに分けて出力してください。各世代は、その世代の変化や出来事に対応する独立した短い本文にしてください。",
-    "第一世代の本文は、SCENARIO_PLAN_JSONのopeningLineを自然な最初の一行として始めてください。",
-    "出力はJSONだけにしてください。Markdownや説明文は不要です。",
-    ...(paramLines.length > 0 ? ["", "USER_PARAMS（以下の指定を最優先で守ること）:", ...paramLines] : []),
+    "あなたは日本語の短編小説家です。",
+    "AP用語を本文中で説明しすぎず、人物の行動・場面・会話・沈黙として描いてください。",
+    "この呼び出しでは、指定された1世代分の本文だけを書きます。",
+    "前話の最後の一文がある場合、その文の続きを自然に受けるように書いてください。",
+    "本文には「世代0」「第1世代」「AP」などのカテゴリ名や見出しを入れないでください。",
+    "未入力のAP要素を無理に補完しすぎず、入力済みの内容とペルソナを優先してください。",
+    "出力はJSONだけにしてください。",
+    ...(paramLines.length > 0 ? ["", "USER_PARAMS:", ...paramLines] : []),
     "",
     "JSON_SCHEMA:",
     JSON.stringify({
-      generations: [
-        {
-          generation: "number",
-          title: "string",
-          text: "string（2〜4段落。抽象論だけでなく、生活の場面や登場人物の行動が見える本文）",
-        },
-      ],
+      generation: "number",
+      title: "string",
+      text: "string",
     }),
+    "",
+    "AP_DEFINITION:",
+    AP_DEFINITION_TEXT,
     "",
     "SCENARIO_PLAN_JSON:",
     scenarioPlan,
     "",
-    "AP_GRAPH:",
-    buildGraphText(storyGraph),
+    "SELECTED_PERSONAS:",
+    buildPersonasText(selectedPersonas),
+    "",
+    "PREVIOUS_LAST_SENTENCE:",
+    previousLastSentence || "なし",
+    "",
+    "CARRYOVER_FROM_PREVIOUS_GENERATIONS:",
+    carryover || "なし",
+    "",
+    "CURRENT_GENERATION_AP:",
+    buildGenerationGraphText(storyGraph, generation, "generation"),
+  ].join("\n");
+}
+
+function buildCarryoverPrompt({
+  generation,
+  previousCarryover,
+  storyText,
+}: {
+  generation: number;
+  previousCarryover: string;
+  storyText: string;
+}) {
+  return [
+    "あなたは連続小説の編集者です。",
+    "以下の本文から、次世代の小説生成に引き継ぐべき制作メモだけを短く抽出してください。",
+    "本文の文体を真似せず、要約・未解決の問い・主人公の変化・次世代で回収すべき要素に絞ってください。",
+    "小説本文は出力しないでください。JSONだけにしてください。",
+    "",
+    "JSON_SCHEMA:",
+    JSON.stringify({
+      carryover: "string",
+    }),
+    "",
+    "PREVIOUS_CARRYOVER:",
+    previousCarryover || "なし",
+    "",
+    `GENERATION: ${generation}`,
+    "",
+    "STORY_TEXT:",
+    storyText,
   ].join("\n");
 }
 
@@ -519,24 +578,41 @@ function normalizeScenarioPreviews(outputText?: string) {
   }
 }
 
-function normalizeGenerationStories(outputText?: string) {
+function normalizeSingleGenerationStory(outputText: string | undefined, fallbackGeneration: number) {
   const text = outputText?.trim();
-  if (!text) return [] as { generation: number; title: string; text: string }[];
+  if (!text) {
+    return { generation: fallbackGeneration, title: "", text: "" };
+  }
 
   try {
     const parsed = JSON.parse(extractJsonObject(text)) as {
-      generations?: { generation?: number; title?: string; text?: string }[];
+      generation?: number;
+      title?: string;
+      text?: string;
     };
-
-    return (parsed.generations ?? [])
-      .filter((item) => item.generation && item.text?.trim())
-      .map((item) => ({
-        generation: item.generation as number,
-        title: item.title?.trim() || `第${item.generation}世代`,
-        text: item.text?.trim() ?? "",
-      }));
+    return {
+      generation: typeof parsed.generation === "number" ? parsed.generation : fallbackGeneration,
+      title: parsed.title?.trim() || "",
+      text: parsed.text?.trim() || text,
+    };
   } catch {
-    return [];
+    return {
+      generation: fallbackGeneration,
+      title: "",
+      text,
+    };
+  }
+}
+
+function normalizeCarryover(outputText?: string) {
+  const text = outputText?.trim();
+  if (!text) return "";
+
+  try {
+    const parsed = JSON.parse(extractJsonObject(text)) as { carryover?: string };
+    return parsed.carryover?.trim() || "";
+  } catch {
+    return text;
   }
 }
 
@@ -564,11 +640,17 @@ function extractJsonObject(text: string) {
   return text;
 }
 
+function extractLastSentence(text: string) {
+  const normalized = text.trim();
+  if (!normalized) return "";
+  const sentences = normalized
+    .split(/(?<=[。！？!?])\s*/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return sentences.at(-1) ?? normalized.slice(-160);
+}
+
 function getTextOrNull(text?: string | null) {
   const normalized = text?.trim();
   return normalized || null;
-}
-
-function unique(values: string[]) {
-  return [...new Set(values)];
 }

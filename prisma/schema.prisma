@@ -8,20 +8,27 @@ datasource db {
 }
 
 model Session {
-  id        String        @id
-  name      String
-  snapshot  String
-  isGroup   Boolean       @default(false)
-  isPublic  Boolean       @default(false)
-  ownerId   String?
-  stories   StoryDraft[]
-  members   GroupMember[]
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
+  id                         String        @id
+  name                       String
+  snapshot                   String
+  isGroup                    Boolean       @default(false)
+  isPublic                   Boolean       @default(false)
+  ownerId                    String?
+  workshopCode               String?       @unique
+  workshopStatus             String        @default("draft")
+  workshopAllowReadAfterClose Boolean      @default(true)
+  workshopAllowAi            Boolean       @default(true)
+  workshopClosedAt           DateTime?
+  stories                    StoryDraft[]
+  members                    GroupMember[]
+  createdAt                  DateTime      @default(now())
+  updatedAt                  DateTime      @updatedAt
 
   @@index([isGroup])
   @@index([ownerId])
   @@index([isPublic])
+  @@index([workshopCode])
+  @@index([workshopStatus])
 }
 
 model StoryDraft {

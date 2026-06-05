@@ -5,6 +5,7 @@ import { useSessionStore } from "@/store/useSessionStore";
 import { FieldEntry, NodeEntry, EdgeEntry } from "@/lib/types/ap";
 import { AP_CROSS_GENERATION_EDGES } from "@/lib/templates/apTemplate";
 import { getFieldDefs, areAllFieldsFilled } from "@/lib/templates/fieldSchema";
+import { MODEL_DESCRIPTIONS, MODEL_HINTS } from "@/lib/templates/modelDescriptions";
 
 type InputMode = "text" | "image" | "video";
 
@@ -39,6 +40,43 @@ type RelatedItem = {
 };
 
 const UX_YEAR_OPTIONS = Array.from({ length: 201 }, (_, index) => 1900 + index);
+const IMAGE_ANALYZE_MAX_DIMENSION = 1280;
+const IMAGE_ANALYZE_JPEG_QUALITY = 0.82;
+const IMAGE_CONFIRMATION_LABELS = new Set([
+  "日常の空間とユーザー体験",
+  "ペルソナ",
+]);
+
+async function fileToCompressedDataUrl(file: File) {
+  const sourceUrl = URL.createObjectURL(file);
+
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error("Failed to load image."));
+      img.src = sourceUrl;
+    });
+
+    const scale = Math.min(
+      1,
+      IMAGE_ANALYZE_MAX_DIMENSION / Math.max(image.naturalWidth, image.naturalHeight)
+    );
+    const width = Math.max(1, Math.round(image.naturalWidth * scale));
+    const height = Math.max(1, Math.round(image.naturalHeight * scale));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Canvas is not available.");
+
+    ctx.drawImage(image, 0, 0, width, height);
+    return canvas.toDataURL("image/jpeg", IMAGE_ANALYZE_JPEG_QUALITY);
+  } finally {
+    URL.revokeObjectURL(sourceUrl);
+  }
+}
 
 function getYearFromValue(value: string) {
   const match = value.match(/\d{4}/);
@@ -86,72 +124,6 @@ function YearPicker({
   );
 }
 
-const MODEL_DESCRIPTIONS_V1: Record<string, string> = {
-  制度:"ある価値観を持った人々が日常的に行う習慣をより円滑に行うために作られる制度や、日常の空間とユーザー体験を構成するビジネスを行う関係者(ビジネスエコシステム)がビジネスをより円滑に行うために作られる制度",
-  日常の空間とユーザー体験:"技術や資源を動員して開発された製品・サービスによって構成される物理的空間であり、その空間で製品・サービスに対してある価値観のもとで意味付けを行い、それらを使用するユーザーの体験",
-  前衛的社会問題:"技術や資源のパラダイムによって引き起こされる社会問題や日常生活が営まれる空間やそこでのユーザーの体験に対してアート(社会批評)を介して顕在化される社会問題.この問題は誰もが認識しているのではなく、ある一部の先進的/マイノリティの人々のみが認識するもの",
-  社会の目標: "前衛的社会問題に取り組み先進的なコミュニティによって社会に認識される社会問題やメディアを介して暴露される制度で拘束された社会問題.社会において解決すべき対象として顕在化される",
-  技術や資源: "日常生活のルーティンを円滑に機能させるために作られた制度のうち、標準化されて過去から制約を受ける技術や資源であり、社会問題を解決すべく組織化された組織(営利・非営利法人、法人格を持たない集団も含み、新規・既存を問わない)が持つ技術や資源",
-  人々の価値観:"文化芸術振興を通して広められる前衛的社会問題や日常のコミュニケーションによって広められる制度で対応できない社会問題に共感する人々のありたい姿",
-  ビジネスエコシステム:"日常の空間やユーザー体験を維持するために、それを構成する製品・サービスに関わる関係者が形成するネットワーク",
-  アート: "人々が気付かない問題を、主観的/内発的な視点で見る人の信念.日常の空間とユーザー体験に違和感を持ち、問題を提示する役割を持つ",
-  メディア: "現代の制度的欠陥を顕在化させるメディア.マスメディアやネットメディア等の主要なメディアに加え、情報発信を行う個人も含まれる",
-  コミュニティ化: "前衛的な問題を認識する人々が集まってできるコミュニティ.公式か非公式かは問わない",
-  組織化: "社会問題を解決するために形成される組織.法人格の有無や新旧の組織を問わず、社会で広く認識された新しい社会問題に取り組む全ての組織",
-  コミュニケーション: "社会問題をより多くの人々に伝えるためのコミュニケーション手段",
-  文化芸術振興:"アート(社会批評)が顕在化させた社会問題を作品として展示し、人々に伝える活動",
-  標準化:"制度の中でも、より広い関係者に影響を与えるために標準化された制度",
-  意味付け:"人々の価値観に基づいて製品やサービスを使用する理由",
-  "製品・サービス":"組織が保有する技術や資源を利用して創造する製品やサービス",
-  製品やサービス:"組織が保有する技術や資源を利用して創造する製品やサービス",
-  習慣化:"人々が価値観に基づいて行う日々の活動のうち、習慣として行われるもの",
-  パラダイム:"その時代の支配的な技術や資源として、次世代にも影響をもたらすもの",
-};
-
-const MODEL_DESCRIPTIONS_V2: Record<string, string> = {
-  ...MODEL_DESCRIPTIONS_V1,
-  制度:"ビジネスを円滑に回すため、また人々の習慣を支えるための制度 ",
-  日常の空間とユーザー体験:"様々な製品やサービスによって構成される空間.ユーザーはこの空間の中で特定の体験を行う",
-  前衛的社会問題:"社会にとって重要だが、まだ多くの人が気づいていない社会問題 ",
-  社会の目標: "顕在化された社会問題に対してマジョリティが認識する社会が向かうべき目標",
-  技術や資源: "社会の目標を達成するために利用可能な技術や資源 ",
-  人々の価値観:"人々がどうありたいか ",
-  ビジネスエコシステム:"日常の空間やユーザー体験を維持するために、それを構成する製品・サービスに関わる関係者が形成するネットワーク.複数の企業・組織・個人（場合によってはユーザーも含む）が相互に依存・連携しながら、価値を共創し、進化していくビジネスの仕組み",
-  アート: "現代社会で起こる現象を批評し、社会に揺らぎを与え、均衡を崩す存在。芸術家や批評家、フーチャリスト、研究者等、日常の中で人々が気づかない問題や当たり前を捉え直す",
-  メディア: "制度的な欠点を大衆に報道するメディア",
-  コミュニティ化: "前衛的社会問題に気付き、社会に顕在化させようと運動する人々の集まり",
-  組織化: "顕在化された解決すべき目標を達成するために生み出された組織.スタートアップをはじめとする企業や、団体が設立される",
-  コミュニケーション: "社会で解決すべきと設定された目標を広く普及させるための手段",
-  文化芸術振興:"芸術や文化活動を支援し、その創造・継承・発信を通じて、人々の感性を豊かにし、社会や地域の活力を高める取り組み",
-  標準化:"制度の中でも公式に標準化され、広く社会に支配的となったもの",
-  意味付け:"人々の価値観に基づいて製品やサービスを使用する理由",
-  製品やサービス:"人々が製品・サービスを利用する理由",
-  習慣化:"ある特定の価値観を持った人々が行う慣習的な行動・ルーティン",
-  パラダイム:"「技術とは何ができ、どのように作られ、どう使われるべきか」という点について人々が共有している当たり前の考え方や前提.新しい技術的パラダイムが現れると、単に性能が向上するだけでなく、設計の考え方、産業構造、私たちの行動や価値観そのものが変わる",
-};
-const MODEL_DESCRIPTIONS = MODEL_DESCRIPTIONS_V2;
-
-const MODEL_HINTS: Record<string, string> = {
-  "技術や資源": "既に存在する技術・資金・人材・データ・組織基盤のうち、このモデルを支えている具体例を挙げると書きやすくなります。",
-  制度: "制度やルールとして定着しているものに注目し、法律・慣行・業界標準・運用ルールなどを具体例で書くと整理しやすくなります。",
-  "日常の空間とユーザー体験": "人が日常の中で実際に触れている場面を思い浮かべ、行動・感情・使い勝手・体験の流れを具体的に書くとまとまりやすくなります。",
-  "前衛的社会問題": "まだ主流ではないが先鋭的に現れている問題や兆候に注目し、誰に何が起き始めているのかを書くと見えやすくなります。",
-  社会の目標: "すでに社会で共有されている課題や、社会が向かうべき目標として何が認識されているのかを書くと整理しやすくなります。",
-  "人々の価値観": "人々が何を大切だと感じるのか、どんな期待や不安を持つのかに注目し、言葉や態度の変化として書くと捉えやすくなります。",
-  ビジネスエコシステム: "企業・自治体・利用者など複数の主体がどう関わっているかを考え、役割分担や利益の流れを書くと見通しが良くなります。",
-  アート: "表現や感性の面からどんな新しい見方を提示しているかに注目し、象徴的な作品や実践を書くと具体化しやすくなります。",
-  メディア: "どの媒体や発信の仕組みを通じて広がっているかを考え、伝わり方や話題化のされ方を書くと整理しやすくなります。",
-  コミュニティ化: "同じ関心を持つ人がどう集まり、支え合い、活動しているかを具体的な場やつながりとして書くと見えやすくなります。",
-  組織化: "活動や課題がどのように役割分担され、組織として形になっているかに注目し、主体や仕組みを書くと整理しやすくなります。",
-  コミュニケーション: "人と人のあいだで何が共有され、どう理解や行動が変わるのかに注目し、会話・発信・参加の形を書いてみてください。",
-  標準化: "ルールや仕様が共通化されている点に注目し、どこまで合意されているのか、何が基準になっているのかを書くと整理しやすくなります。",
-  文化芸術振興: "文化や芸術を支える仕組み・活動・支援制度に注目し、誰が何を後押ししているのかを具体的に書くと見えやすくなります。",
-  パラダイム: "前の世代から次の世代へ、物事の見方がどう切り替わったのかに注目し、価値基準の変化として書くと整理しやすくなります。",
-  "製品・サービス": "技術や資源がどのような製品やサービスとして形になったのかを考え、利用場面や提供価値まで書くと具体化しやすくなります。",
-  意味付け: "人々の価値観が次の世代でどんな意味として受け取られるのかに注目し、言葉・物語・解釈の変化として書いてみてください。",
-  習慣化: "一時的な動きではなく、繰り返されて定着した行動や運用に注目し、日常や制度の中にどう埋め込まれたかを書くと見えやすくなります。",
-};
-
 function getNormalizedText(text: string | null) {
   const normalized = text?.trim();
   return normalized || null;
@@ -175,6 +147,8 @@ export function RightPanel() {
   const session = useSessionStore((state) => state.session);
   const selectedTarget = useSessionStore((state) => state.selectedTarget);
   const selectTarget = useSessionStore((state) => state.selectTarget);
+  const appendNodeFieldEntry = useSessionStore((state) => state.appendNodeFieldEntry);
+  const appendEdgeFieldEntry = useSessionStore((state) => state.appendEdgeFieldEntry);
   const setNodeFieldEntries = useSessionStore((state) => state.setNodeFieldEntries);
   const setEdgeFieldEntries = useSessionStore((state) => state.setEdgeFieldEntries);
   const updateEdgeText = useSessionStore((state) => state.updateEdgeText);
@@ -334,15 +308,18 @@ export function RightPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTarget]);
 
-  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      setImagePreview(reader.result as string);
+
+    try {
+      const compressedDataUrl = await fileToCompressedDataUrl(file);
+      setImagePreview(compressedDataUrl);
       setImageError(null);
-    };
-    reader.readAsDataURL(file);
+    } catch {
+      setImageError("画像の読み込みに失敗しました。別の画像で試してください。");
+    }
+
     e.target.value = "";
   };
 
@@ -356,6 +333,7 @@ export function RightPanel() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          sessionId: session?.id,
           imageBase64: imagePreview,
           label: selectedEntry.label,
           description: MODEL_DESCRIPTIONS[selectedEntry.label] ?? null,
@@ -387,6 +365,7 @@ export function RightPanel() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          sessionId: session?.id,
           videoUrl: videoUrl.trim(),
           label: selectedEntry.label,
           description: MODEL_DESCRIPTIONS[selectedEntry.label] ?? null,
@@ -426,11 +405,15 @@ export function RightPanel() {
   const canConfirm = hasFieldSchema
     ? areAllFieldsFilled(selectedEntry?.label ?? "", mergedEditingFields)
     : Boolean(freeText.trim());
+  const canUseImageConfirmation = Boolean(
+    selectedEntry && IMAGE_CONFIRMATION_LABELS.has(selectedEntry.label)
+  );
   const requiresImageReview = Boolean(generatedImage);
   const canSubmitEntry = canConfirm && !requiresImageReview;
   const shouldHighlightImageCheck =
-    hasFieldSchema && canConfirm && !generatedImage && !isGeneratingImage;
-  const shouldShowImageCheck = hasFieldSchema && (canConfirm || generatedImage || isGeneratingImage);
+    canUseImageConfirmation && hasFieldSchema && canConfirm && !generatedImage && !isGeneratingImage;
+  const shouldShowImageCheck =
+    canUseImageConfirmation && hasFieldSchema && (canConfirm || generatedImage || isGeneratingImage);
   const filledCount = fieldDefs.filter((def) => Boolean((mergedEditingFields[def.key] ?? "").trim())).length;
   const progressPercent = fieldDefs.length > 0 ? (filledCount / fieldDefs.length) * 100 : 0;
 
@@ -450,14 +433,21 @@ export function RightPanel() {
 
     const currentEntries: FieldEntry[] = selectedEntry?.fieldEntries ?? [];
     const entryIndex = selectedTarget.entryIndex;
-    const newEntries = entryIndex !== undefined
-      ? currentEntries.map((e, i) => (i === entryIndex ? mergedEditingFields : e))
-      : [...currentEntries, mergedEditingFields];
 
-    if (selectedTarget.kind === "node") {
-      setNodeFieldEntries(selectedTarget.generation, selectedTarget.id, newEntries);
+    if (entryIndex === undefined) {
+      if (selectedTarget.kind === "node") {
+        appendNodeFieldEntry(selectedTarget.generation, selectedTarget.id, mergedEditingFields);
+      } else {
+        appendEdgeFieldEntry(selectedTarget.generation, selectedTarget.id, mergedEditingFields);
+      }
     } else {
-      setEdgeFieldEntries(selectedTarget.generation, selectedTarget.id, newEntries);
+      const newEntries = currentEntries.map((e, i) => (i === entryIndex ? mergedEditingFields : e));
+
+      if (selectedTarget.kind === "node") {
+        setNodeFieldEntries(selectedTarget.generation, selectedTarget.id, newEntries);
+      } else {
+        setEdgeFieldEntries(selectedTarget.generation, selectedTarget.id, newEntries);
+      }
     }
 
     // 追加/更新後は新規追加モードにリセット
@@ -510,6 +500,7 @@ export function RightPanel() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          sessionId: session.id,
           label: selectedEntry.label,
           description: MODEL_DESCRIPTIONS[selectedEntry.label] ?? null,
           fieldDefs,
@@ -533,7 +524,7 @@ export function RightPanel() {
   };
 
   const handleGenerateIntentImage = async () => {
-    if (!selectedEntry || !hasFieldSchema) return;
+    if (!selectedEntry || !hasFieldSchema || !canUseImageConfirmation) return;
     setIsGeneratingImage(true);
     setImageGenerationError(null);
     setGeneratedImage(null);
@@ -544,6 +535,7 @@ export function RightPanel() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          sessionId: session?.id,
           label: selectedEntry.label,
           description: MODEL_DESCRIPTIONS[selectedEntry.label] ?? null,
           fieldDefs,

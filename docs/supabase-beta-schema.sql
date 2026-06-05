@@ -42,3 +42,26 @@ create unique index if not exists "GroupMember_sessionId_userId_key"
 
 create index if not exists "GroupMember_userId_idx"
   on "GroupMember" ("userId");
+
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('generated-images', 'generated-images', true, 10485760, array['image/png'])
+on conflict (id) do update
+  set public = excluded.public,
+      file_size_limit = excluded.file_size_limit,
+      allowed_mime_types = excluded.allowed_mime_types;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'storage'
+      and tablename = 'objects'
+      and policyname = 'Authenticated users can upload generated images'
+  ) then
+    create policy "Authenticated users can upload generated images"
+      on storage.objects
+      for insert
+      to authenticated
+      with check (bucket_id = 'generated-images');
+  end if;
+end $$;

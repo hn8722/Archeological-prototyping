@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import { getOpenAIClient, getOpenAIModel } from "@/lib/server/openai";
 import { FieldDef } from "@/lib/templates/fieldSchema";
+import { getUser } from "@/lib/auth/actions";
+import { canUseSessionAi } from "@/lib/server/session-store";
 
 type RequestBody = {
+  sessionId?: string;
   imageBase64: string;   // "data:image/jpeg;base64,..."
   label: string;
   description?: string;
@@ -15,6 +18,15 @@ export async function POST(request: Request) {
 
     if (!body.imageBase64 || !body.label || !body.fieldDefs?.length) {
       return NextResponse.json({ error: "必要なパラメータが不足しています。" }, { status: 400 });
+    }
+
+    const user = await getUser();
+    if (!user || !body.sessionId) {
+      return NextResponse.json({ error: "ログインとセッション情報が必要です。" }, { status: 401 });
+    }
+    const aiAccess = await canUseSessionAi(body.sessionId, user.id, user.email);
+    if (!aiAccess.allowed) {
+      return NextResponse.json({ error: "このセッションではAI利用が停止されています。" }, { status: 403 });
     }
 
     const client = getOpenAIClient();

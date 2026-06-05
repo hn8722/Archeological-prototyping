@@ -34,6 +34,11 @@ export async function AppHeader() {
         <Link href="/" className="app-home-icon" aria-label="Go to home">
           <HomeIcon />
         </Link>
+        {user && (
+          <Link href="/admin/workshops" className="app-admin-link">
+            Admin
+          </Link>
+        )}
         <div className="app-header-spacer" />
         {user && (
           <div className="app-user-chip" title={user.id}>

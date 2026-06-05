@@ -59,9 +59,9 @@ export type SessionPatch = {
   baseRevision: number;
   nextRevision: number;
   generationIndex: number;
-  targetKind: "node" | "edge";
+  targetKind: "node" | "edge" | "generation" | "nodeFieldEntryAppend" | "edgeFieldEntryAppend";
   entryId: string;
-  entry: NodeEntry | EdgeEntry;
+  entry: NodeEntry | EdgeEntry | GenerationModel | FieldEntry;
 };
 
 export type SelectedTarget =

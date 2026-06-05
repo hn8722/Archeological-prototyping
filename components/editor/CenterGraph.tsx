@@ -1,6 +1,6 @@
 "use client";
 
-import { CSSProperties, useMemo } from "react";
+import { CSSProperties, useEffect, useMemo, useState } from "react";
 import { useSessionStore } from "@/store/useSessionStore";
 import {
   AP_CROSS_GENERATION_EDGES,
@@ -8,37 +8,49 @@ import {
   AP_TEMPLATE_NODES,
 } from "@/lib/templates/apTemplate";
 import { EntryStatus } from "@/lib/types/ap";
+import { formatGenerationLabel } from "@/lib/utils/generationLabel";
+import { OnlineMember } from "@/lib/realtime/useOnlineMembers";
 
-const NODE_WIDTH = 190;
-const NODE_HEIGHT = 92;
-const GENERATION_GAP = 120;
+const MAP_WIDTH = 1320;
+const MAP_HEIGHT = 620;
+const NODE_WIDTH = 176;
+const NODE_HEIGHT = 86;
 const EDGE_LABEL_WIDTH = 124;
 const EDGE_LABEL_HEIGHT = 34;
-const DIAGRAM_PADDING_X = 96;
-const DIAGRAM_PADDING_Y = 72;
-const POSITION_SCALE_X = 1.18;
-const POSITION_SCALE_Y = 1.28;
-const GENERATION_X_OFFSETS: Record<number, number> = {
-  3: -120,
+const LEFT_EDGE_X = 2;
+const RIGHT_EDGE_X = MAP_WIDTH - 2;
+const CROSS_EDGE_DIAGONAL_OFFSET = 60;
+const FUTURE_CROSS_EDGE_TARGET_Y: Record<string, number> = {
+  cg2: 278,
+  cg3: 341,
+};
+const FUTURE_CROSS_EDGE_TARGET_Y_FLIPPED: Record<string, number> = {
+  cg2: 341,
+  cg3: 278,
+};
+const HORIZONTAL_CROSS_EDGE_IDS = new Set(["cg1", "cg4"]);
+const AP_NODE_POSITIONS_NORMAL: Record<string, { left: number; top: number }> = {
+  n1: { left: 345, top: 74 },
+  n2: { left: 120, top: 267 },
+  n3: { left: 345, top: 460 },
+  n4: { left: 570, top: 267 },
+  n5: { left: 795, top: 74 },
+  n6: { left: 795, top: 460 },
+};
+const AP_NODE_POSITIONS_FLIPPED: Record<string, { left: number; top: number }> = {
+  n1: { left: 345, top: 460 },
+  n2: { left: 120, top: 267 },
+  n3: { left: 345, top: 74 },
+  n4: { left: 570, top: 267 },
+  n5: { left: 795, top: 460 },
+  n6: { left: 795, top: 74 },
 };
 
-const GENERATION_POSITION_OVERRIDES: Record<number, Record<string, { x: number; y: number }>> = {
-  // Generation 2 is used as a transition layer so links from both sides stay cleaner.
-  2: {
-    n1: { x: 220, y: 320 },
-    n3: { x: 220, y: 40 },
-    n5: { x: 640, y: 320 },
-    n6: { x: 640, y: 40 },
-  },
-  // Generation 3 keeps the base order so the outgoing links from generation 2
-  // arrive without creating the same crisscross pattern on the right side.
-  3: {
-    n1: { x: 220, y: 50 },
-    n3: { x: 220, y: 310 },
-    n5: { x: 640, y: 50 },
-    n6: { x: 640, y: 310 },
-  },
-};
+function getApNodePositions(generationIndex: number) {
+  return generationIndex % 2 === 0
+    ? AP_NODE_POSITIONS_FLIPPED
+    : AP_NODE_POSITIONS_NORMAL;
+}
 
 type DiagramNode = {
   generationIndex: number;
@@ -86,6 +98,7 @@ type DiagramBridge = {
   labelX: number;
   labelY: number;
   dashed: boolean;
+  showLabel: boolean;
 };
 
 const DASHED_EDGE_LABELS = new Set([
@@ -140,46 +153,65 @@ function getLineAppearance(status: EntryStatus, isSelected: boolean) {
   };
 }
 
-export function CenterGraph() {
+export function CenterGraph({ collaborationPeers = [] }: { collaborationPeers?: OnlineMember[] }) {
   const session = useSessionStore((state) => state.session);
   const selectedTarget = useSessionStore((state) => state.selectedTarget);
   const selectTarget = useSessionStore((state) => state.selectTarget);
+  const ensureGeneration = useSessionStore((state) => state.ensureGeneration);
+  const [activeMapGeneration, setActiveMapGeneration] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!session?.generations.length) return;
+
+    const indexes = session.generations
+      .map((generation) => generation.generationIndex)
+      .sort((first, second) => first - second);
+    const initialIndex = indexes.includes(session.activeGeneration)
+      ? session.activeGeneration
+      : indexes[0];
+
+    setActiveMapGeneration((current) => {
+      if (indexes.includes(session.activeGeneration)) {
+        return session.activeGeneration;
+      }
+
+      if (current !== null && indexes.includes(current)) {
+        return current;
+      }
+
+      return initialIndex;
+    });
+  }, [session]);
 
   const graphModel = useMemo(() => {
-    if (!session) return null;
+    if (!session || activeMapGeneration === null) return null;
 
-    const generationIndexes = session.generations.map((generation) => generation.generationIndex);
-    const templateMaxX = Math.max(...AP_TEMPLATE_NODES.map((node) => node.x * POSITION_SCALE_X));
-    const templateMaxY = Math.max(...AP_TEMPLATE_NODES.map((node) => node.y * POSITION_SCALE_Y));
-    const generationWidth = templateMaxX + NODE_WIDTH + DIAGRAM_PADDING_X * 2;
-    const width =
-      generationWidth * generationIndexes.length + GENERATION_GAP * (generationIndexes.length - 1);
-    const height = templateMaxY + NODE_HEIGHT + DIAGRAM_PADDING_Y * 2;
+    const allGenerationIndexes = session.generations
+      .map((generation) => generation.generationIndex)
+      .sort((first, second) => first - second);
+    const mapGeneration = allGenerationIndexes.includes(activeMapGeneration)
+      ? activeMapGeneration
+      : allGenerationIndexes[0];
+    const generationIndexes = [mapGeneration];
+    const visibleGenerationSet = new Set(generationIndexes);
+    const generationWidth = MAP_WIDTH;
+    const width = MAP_WIDTH;
+    const height = MAP_HEIGHT;
 
     const getGenerationLeft = (generationIndex: number) => {
-      const generationOffset = generationIndexes.indexOf(generationIndex);
-      if (generationOffset < 0) return null;
+      if (!generationIndexes.includes(generationIndex)) return null;
 
-      return (
-        generationOffset * (generationWidth + GENERATION_GAP) +
-        (GENERATION_X_OFFSETS[generationIndex] ?? 0)
-      );
+      return 0;
     };
 
     const getNodePosition = (generationIndex: number, templateId: string) => {
-      const templateNode = AP_TEMPLATE_NODES.find((node) => node.id === templateId);
+      const nodePosition = getApNodePositions(generationIndex)[templateId];
       const generationLeft = getGenerationLeft(generationIndex);
 
-      if (!templateNode || generationLeft === null) return null;
+      if (!nodePosition || generationLeft === null) return null;
 
-      const positionSource =
-        GENERATION_POSITION_OVERRIDES[generationIndex]?.[templateId] ?? templateNode;
-
-      const left =
-        generationLeft +
-        positionSource.x * POSITION_SCALE_X +
-        DIAGRAM_PADDING_X;
-      const top = positionSource.y * POSITION_SCALE_Y + DIAGRAM_PADDING_Y;
+      const left = generationLeft + nodePosition.left;
+      const top = nodePosition.top;
 
       return {
         left,
@@ -189,7 +221,11 @@ export function CenterGraph() {
       };
     };
 
-    const nodes: DiagramNode[] = session.generations.flatMap((generation) =>
+    const visibleGenerations = session.generations.filter((generation) =>
+      visibleGenerationSet.has(generation.generationIndex)
+    );
+
+    const nodes: DiagramNode[] = visibleGenerations.flatMap((generation) =>
       AP_TEMPLATE_NODES.map((templateNode) => {
         const nodeEntry = generation.nodes[templateNode.id];
         const position = getNodePosition(generation.generationIndex, templateNode.id);
@@ -211,7 +247,7 @@ export function CenterGraph() {
       })
     );
 
-    const edges: DiagramEdge[] = session.generations.flatMap((generation) =>
+    const edges: DiagramEdge[] = visibleGenerations.flatMap((generation) =>
       AP_TEMPLATE_EDGES.flatMap<DiagramEdge>((templateEdge) => {
         const edgeEntry = generation.edges[templateEdge.id];
         const source = getNodePosition(generation.generationIndex, templateEdge.source);
@@ -245,37 +281,52 @@ export function CenterGraph() {
       })
     );
 
-    const bridges: DiagramBridge[] = generationIndexes.slice(0, -1).flatMap((generationIndex, index) => {
-      const nextGenerationIndex = generationIndexes[index + 1];
+    const bridges: DiagramBridge[] = generationIndexes.flatMap((generationIndex) => {
       const generation = session.generations.find((item) => item.generationIndex === generationIndex);
 
       if (!generation) return [];
 
-      return AP_CROSS_GENERATION_EDGES.flatMap<DiagramBridge>((connection, connectionIndex) => {
+      const futureBridges = AP_CROSS_GENERATION_EDGES.flatMap<DiagramBridge>((connection) => {
         const source = getNodePosition(generationIndex, connection.source);
-        const target = getNodePosition(nextGenerationIndex, connection.target);
         const edgeEntry = generation.edges[connection.id];
         const isSelected =
           selectedTarget?.kind === "edge" &&
           selectedTarget.generation === generationIndex &&
           selectedTarget.id === connection.id;
 
-        if (!source || !target || !edgeEntry) return [];
+        if (!source || !edgeEntry) return [];
 
-        const start = getNodeAnchorPoint(source, target);
-        const end = getNodeAnchorPoint(target, source);
+        const uxPosition = getNodePosition(generationIndex, "n2");
+        const futureTargetY = generationIndex % 2 === 0
+          ? FUTURE_CROSS_EDGE_TARGET_Y_FLIPPED
+          : FUTURE_CROSS_EDGE_TARGET_Y;
+        const visibleTargetY = HORIZONTAL_CROSS_EDGE_IDS.has(connection.id)
+          ? source.centerY
+          : futureTargetY[connection.id] ??
+            (uxPosition?.centerY ?? source.centerY) +
+              (connection.id === "cg2" ? -CROSS_EDGE_DIAGONAL_OFFSET : CROSS_EDGE_DIAGONAL_OFFSET);
+        const visibleTarget = {
+          centerX: RIGHT_EDGE_X,
+          centerY: visibleTargetY,
+        };
+
+        const start = getNodeAnchorPoint(source, visibleTarget);
+        const end = {
+          x: RIGHT_EDGE_X,
+          y: visibleTargetY,
+        };
         const x1 = start.x;
         const y1 = start.y;
         const x2 = end.x;
         const y2 = end.y;
         const labelX = (x1 + x2) / 2;
-        const labelY = (y1 + y2) / 2 + (connectionIndex % 2 === 0 ? -18 : 18);
+        const labelY = (y1 + y2) / 2;
 
         return [
           {
             generationIndex,
             edgeId: connection.id,
-            id: `${generationIndex}-${nextGenerationIndex}-${connection.source}-${connection.target}`,
+            id: `${generationIndex}-future-${connection.source}-${connection.target}`,
             label: connection.label,
             status: edgeEntry.status,
             isSelected,
@@ -286,18 +337,90 @@ export function CenterGraph() {
             path: `M ${x1} ${y1} L ${x2} ${y2}`,
             labelX,
             labelY,
-            dashed: DASHED_EDGE_LABELS.has(connection.label),
+            dashed: true,
+            showLabel: true,
           },
         ];
       });
+
+      const pastBridges = AP_CROSS_GENERATION_EDGES.flatMap<DiagramBridge>((connection) => {
+        const target = getNodePosition(generationIndex, connection.target);
+        const previousGeneration = session.generations.find(
+          (item) => item.generationIndex === generationIndex - 1
+        );
+        const edgeEntry = previousGeneration?.edges[connection.id] ?? generation.edges[connection.id];
+
+        if (!target || !edgeEntry) return [];
+
+        const visibleSourceY = HORIZONTAL_CROSS_EDGE_IDS.has(connection.id)
+          ? target.centerY
+          : target.centerY + (connection.id === "cg2" ? -CROSS_EDGE_DIAGONAL_OFFSET : CROSS_EDGE_DIAGONAL_OFFSET);
+        const visibleSource = {
+          centerX: LEFT_EDGE_X,
+          centerY: visibleSourceY,
+        };
+        const end = getNodeAnchorPoint(target, visibleSource);
+        const x1 = LEFT_EDGE_X;
+        const y1 = visibleSourceY;
+        const x2 = end.x;
+        const y2 = end.y;
+        const labelX = (x1 + x2) / 2;
+        const labelY = (y1 + y2) / 2;
+
+        return [
+          {
+            generationIndex,
+            edgeId: connection.id,
+            id: `${generationIndex}-past-${connection.source}-${connection.target}`,
+            label: connection.label,
+            status: edgeEntry.status,
+            isSelected: false,
+            x1,
+            y1,
+            x2,
+            y2,
+            path: `M ${x1} ${y1} L ${x2} ${y2}`,
+            labelX,
+            labelY,
+            dashed: true,
+            showLabel: false,
+          },
+        ];
+      });
+
+      return [...pastBridges, ...futureBridges];
     });
 
-    return { generationIndexes, generationWidth, width, height, nodes, edges, bridges, getGenerationLeft };
-  }, [selectedTarget, session]);
+    return {
+      allGenerationIndexes,
+      generationIndexes,
+      generationWidth,
+      width,
+      height,
+      nodes,
+      edges,
+      bridges,
+      getGenerationLeft,
+      mapGeneration,
+    };
+  }, [activeMapGeneration, selectedTarget, session]);
 
   if (!session || !graphModel) {
     return <section className="panel graph-panel">Loading...</section>;
   }
+
+  const moveToGeneration = (generationIndex: number) => {
+    ensureGeneration(generationIndex);
+    setActiveMapGeneration(generationIndex);
+  };
+
+  const getNodePeers = (generationIndex: number, nodeId: string) =>
+    collaborationPeers.filter(
+      (peer) =>
+        peer.selectedTarget?.kind === "node" &&
+        peer.selectedTarget.generation === generationIndex &&
+        peer.selectedTarget.id === nodeId
+    );
 
   return (
     <section className="panel graph-panel">
@@ -312,6 +435,22 @@ export function CenterGraph() {
             } as CSSProperties
           }
         >
+          <button
+            type="button"
+            className="ap-transition-plus ap-transition-plus-left"
+            onClick={() => moveToGeneration(graphModel.mapGeneration - 1)}
+            aria-label="過去側のAPを見る"
+          >
+            +
+          </button>
+          <button
+            type="button"
+            className="ap-transition-plus ap-transition-plus-right"
+            onClick={() => moveToGeneration(graphModel.mapGeneration + 1)}
+            aria-label="未来側のAPを見る"
+          >
+            +
+          </button>
           <svg
             className="ap-map-svg"
             viewBox={`0 0 ${graphModel.width} ${graphModel.height}`}
@@ -390,18 +529,18 @@ export function CenterGraph() {
                 top: "18px",
               }}
             >
-              Generation {generationIndex}
+              {formatGenerationLabel(generationIndex)}
             </div>
           ))}
 
-          {graphModel.bridges.map((bridge) => (
+          {graphModel.bridges.filter((bridge) => bridge.showLabel).map((bridge) => (
             <button
               key={`${bridge.id}-label`}
               type="button"
               className={`ap-bridge-label ${bridge.isSelected ? "ap-edge-label-selected" : ""} ${bridge.status === "filled" ? "ap-edge-label-filled" : ""}`}
               style={{
-                left: `${bridge.labelX - 82}px`,
-                top: `${bridge.labelY - 14}px`,
+                left: `${bridge.labelX - EDGE_LABEL_WIDTH / 2}px`,
+                top: `${bridge.labelY - EDGE_LABEL_HEIGHT / 2}px`,
               }}
               onClick={() =>
                 selectTarget({
@@ -446,20 +585,31 @@ export function CenterGraph() {
             if (!node.position) return null;
 
             const appearance = getNodeAppearance(node.status, node.isSelected);
+            const nodePeers = getNodePeers(node.generationIndex, node.nodeId);
+            const peerColor = nodePeers[0]?.color;
+            const peerNames = nodePeers.map((peer) => peer.displayName).join("、");
+            const peerLabel =
+              nodePeers.length <= 1
+                ? nodePeers[0]?.displayName
+                : `${nodePeers[0].displayName} +${nodePeers.length - 1}`;
+            const nodeStyle = {
+              left: `${node.position.left}px`,
+              top: `${node.position.top}px`,
+              background: appearance.background,
+              borderColor: peerColor ?? appearance.borderColor,
+              opacity: appearance.opacity,
+              boxShadow: peerColor
+                ? `0 0 0 3px color-mix(in srgb, ${peerColor} 22%, transparent), 0 0 18px color-mix(in srgb, ${peerColor} 24%, transparent)`
+                : appearance.boxShadow,
+              "--peer-color": peerColor,
+            } as CSSProperties;
 
             return (
               <button
                 key={`${node.generationIndex}-${node.nodeId}`}
                 type="button"
-                className={`ap-node-card ${node.isSelected ? "ap-node-card-selected" : ""} ${node.status === "filled" ? "ap-node-card-filled" : ""} ${node.generationIndex === 2 && node.nodeId === "n3" && node.status !== "filled" ? "ap-node-guide-pulse" : ""}`}
-                style={{
-                  left: `${node.position.left}px`,
-                  top: `${node.position.top}px`,
-                  background: appearance.background,
-                  borderColor: appearance.borderColor,
-                  opacity: appearance.opacity,
-                  boxShadow: appearance.boxShadow,
-                }}
+                className={`ap-node-card ${node.isSelected ? "ap-node-card-selected" : ""} ${node.status === "filled" ? "ap-node-card-filled" : ""} ${nodePeers.length > 0 ? "ap-node-card-peer-active" : ""} ${node.generationIndex === 2 && node.nodeId === "n3" && node.status !== "filled" ? "ap-node-guide-pulse" : ""}`}
+                style={nodeStyle}
                 onClick={() =>
                   selectTarget({
                     generation: node.generationIndex,
@@ -468,11 +618,22 @@ export function CenterGraph() {
                   })
                 }
               >
+                {nodePeers.length > 0 && (
+                  <span className="ap-node-peer-badge" aria-label={`${peerNames} が表示中`}>
+                    {peerLabel}
+                  </span>
+                )}
                 <strong>{node.label}</strong>
                 {node.decade && <span className="ap-node-decade">{node.decade}</span>}
-                <span className="ap-hover-tooltip" aria-hidden="true">
-                  {" "}
-                </span>
+                {nodePeers.length > 0 ? (
+                  <span className="ap-peer-tooltip" aria-hidden="true">
+                    {peerNames}
+                  </span>
+                ) : (
+                  <span className="ap-hover-tooltip" aria-hidden="true">
+                    {" "}
+                  </span>
+                )}
               </button>
             );
           })}

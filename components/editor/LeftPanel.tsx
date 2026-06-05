@@ -1,9 +1,11 @@
 "use client";
 
+import { CSSProperties, useEffect, useState } from "react";
 import { useSessionStore } from "@/store/useSessionStore";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { getFieldDefs, combineFields } from "@/lib/templates/fieldSchema";
 import { NodeEntry, EdgeEntry, FieldEntry } from "@/lib/types/ap";
+import { formatGenerationLabel } from "@/lib/utils/generationLabel";
 
 export function LeftPanel() {
   const session = useSessionStore((state) => state.session);
@@ -13,12 +15,50 @@ export function LeftPanel() {
   const setActiveGeneration = useSessionStore((state) => state.setActiveGeneration);
   const setNodeFieldEntries = useSessionStore((state) => state.setNodeFieldEntries);
   const setEdgeFieldEntries = useSessionStore((state) => state.setEdgeFieldEntries);
+  const [generationTabStart, setGenerationTabStart] = useState(0);
+
+  useEffect(() => {
+    if (!session?.generations.length) return;
+
+    const sortedGenerations = [...session.generations].sort(
+      (first, second) => first.generationIndex - second.generationIndex
+    );
+    const activePosition = sortedGenerations.findIndex(
+      (generation) => generation.generationIndex === activeGeneration
+    );
+    const maxStart = Math.max(sortedGenerations.length - 3, 0);
+
+    if (activePosition < 0) {
+      setGenerationTabStart((current) => Math.min(current, maxStart));
+      return;
+    }
+
+    setGenerationTabStart((current) => {
+      const clampedCurrent = Math.min(current, maxStart);
+      if (activePosition >= clampedCurrent && activePosition < clampedCurrent + 3) {
+        return clampedCurrent;
+      }
+
+      return Math.min(Math.max(activePosition - 1, 0), maxStart);
+    });
+  }, [activeGeneration, session]);
 
   if (!session) return <aside className="panel">Loading...</aside>;
 
-  const generations = session.generations;
+  const generations = [...session.generations].sort(
+    (first, second) => first.generationIndex - second.generationIndex
+  );
   const currentGeneration =
     generations.find((g) => g.generationIndex === activeGeneration) ?? generations[0];
+  const currentGenerationPosition = Math.max(
+    0,
+    generations.findIndex((generation) => generation.generationIndex === currentGeneration.generationIndex)
+  );
+  const maxVisibleGenerationStart = Math.max(generations.length - 3, 0);
+  const visibleGenerationStart = Math.min(generationTabStart, maxVisibleGenerationStart);
+  const visibleGenerations = generations.slice(visibleGenerationStart, visibleGenerationStart + 3);
+  const hasPreviousGenerations = visibleGenerationStart > 0;
+  const hasNextGenerations = visibleGenerationStart + visibleGenerations.length < generations.length;
 
   const selectedNodeId =
     selectedTarget?.kind === "node" &&
@@ -34,6 +74,23 @@ export function LeftPanel() {
 
   function entryPreview(label: string, entry: FieldEntry): string {
     return combineFields(label, entry);
+  }
+
+  function getGenerationTabStyle(generationIndex: number): CSSProperties {
+    const position = generations.findIndex(
+      (generation) => generation.generationIndex === generationIndex
+    );
+    const ratio = generations.length <= 1 ? 0.5 : position / (generations.length - 1);
+    const hue = 202 + ratio * 24;
+    const saturation = 44;
+    const lightness = 94 - ratio * 4;
+
+    return {
+      "--generation-tab-bg": `hsl(${hue} ${saturation}% ${lightness}%)`,
+      "--generation-tab-bg-active": `hsl(${hue} ${saturation}% ${Math.max(lightness - 8, 66)}%)`,
+      "--generation-tab-border": `hsl(${hue} 34% ${Math.max(lightness - 18, 66)}%)`,
+      "--generation-tab-text": `hsl(${hue} 34% 34%)`,
+    } as CSSProperties;
   }
 
   function renderNodeEntries(node: NodeEntry) {
@@ -186,22 +243,45 @@ export function LeftPanel() {
     <aside className="panel">
       <h2 className="panel-title">APパーツ一覧</h2>
 
-      <div className="generation-tabs" role="tablist" aria-label="Generation tabs">
-        {generations.map((generation) => {
-          const isActive = generation.generationIndex === currentGeneration.generationIndex;
-          return (
-            <button
-              key={generation.generationIndex}
-              type="button"
-              role="tab"
-              aria-selected={isActive}
-              className={`generation-tab ${isActive ? "generation-tab-active" : ""}`}
-              onClick={() => setActiveGeneration(generation.generationIndex)}
-            >
-              世代 {generation.generationIndex}
-            </button>
-          );
-        })}
+      <div className="generation-tab-strip">
+        <button
+          type="button"
+          className="generation-tab-nav"
+          disabled={!hasPreviousGenerations}
+          onClick={() => setGenerationTabStart((current) => Math.max(current - 1, 0))}
+          aria-label="前の世代を見る"
+        >
+          &lt;
+        </button>
+        <div className="generation-tabs" role="tablist" aria-label="Generation tabs">
+          {visibleGenerations.map((generation) => {
+            const isActive = generation.generationIndex === currentGeneration.generationIndex;
+            return (
+              <button
+                key={generation.generationIndex}
+                type="button"
+                role="tab"
+                aria-selected={isActive}
+                className={`generation-tab ${isActive ? "generation-tab-active" : ""}`}
+                style={getGenerationTabStyle(generation.generationIndex)}
+                onClick={() => setActiveGeneration(generation.generationIndex)}
+              >
+                {formatGenerationLabel(generation.generationIndex)}
+              </button>
+            );
+          })}
+        </div>
+        <button
+          type="button"
+          className="generation-tab-nav"
+          disabled={!hasNextGenerations}
+          onClick={() =>
+            setGenerationTabStart((current) => Math.min(current + 1, maxVisibleGenerationStart))
+          }
+          aria-label="次の世代を見る"
+        >
+          &gt;
+        </button>
       </div>
 
       <div className="generation-block">

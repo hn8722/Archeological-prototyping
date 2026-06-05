@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { prisma } from "@/lib/server/prisma";
 import { Prisma } from "@/generated/prisma/client";
 import { mockSession } from "@/lib/data/mockSession";
@@ -168,6 +168,265 @@ export async function listGroupSessions(userId: string, userEmail?: string | nul
   }));
 }
 
+export type ManagedWorkshopSession = {
+  id: string;
+  name: string;
+  ownerId: string | null;
+  workshopCode: string | null;
+  workshopStatus: string;
+  workshopAllowReadAfterClose: boolean;
+  workshopAllowAi: boolean;
+  workshopClosedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  memberCount: number;
+  storyCount: number;
+  members: { userId: string; role: string; joinedAt: string }[];
+};
+
+export async function listManagedWorkshopSessions(ownerId: string): Promise<ManagedWorkshopSession[]> {
+  type WorkshopRow = {
+    id: string;
+    name: string;
+    ownerId: string | null;
+    workshopCode: string | null;
+    workshopStatus: string | null;
+    workshopAllowReadAfterClose: boolean | number | null;
+    workshopAllowAi: boolean | number | null;
+    workshopClosedAt: string | Date | null;
+    createdAt: string | Date;
+    updatedAt: string | Date;
+    memberCount: bigint | number | string;
+    storyCount: bigint | number | string;
+  };
+
+  const rows = await prisma.$queryRaw<WorkshopRow[]>(Prisma.sql`
+    SELECT
+      s."id",
+      s."name",
+      s."ownerId",
+      s."workshopCode",
+      s."workshopStatus",
+      s."workshopAllowReadAfterClose",
+      s."workshopAllowAi",
+      s."workshopClosedAt",
+      s."createdAt",
+      s."updatedAt",
+      COUNT(DISTINCT gm."id") AS "memberCount",
+      COUNT(DISTINCT sd."id") AS "storyCount"
+    FROM "Session" s
+    LEFT JOIN "GroupMember" gm ON gm."sessionId" = s."id"
+    LEFT JOIN "StoryDraft" sd ON sd."sessionId" = s."id"
+    WHERE s."isGroup" = true AND s."ownerId" = ${ownerId}
+    GROUP BY s."id"
+    ORDER BY s."updatedAt" DESC
+  `);
+
+  const members = rows.length
+    ? await prisma.groupMember.findMany({
+        where: { sessionId: { in: rows.map((row) => row.id) } },
+        orderBy: { joinedAt: "asc" },
+        select: { sessionId: true, userId: true, role: true, joinedAt: true },
+      })
+    : [];
+
+  const membersBySessionId = new Map<string, { userId: string; role: string; joinedAt: string }[]>();
+  for (const member of members) {
+    const list = membersBySessionId.get(member.sessionId) ?? [];
+    list.push({
+      userId: member.userId,
+      role: member.role,
+      joinedAt: member.joinedAt.toISOString(),
+    });
+    membersBySessionId.set(member.sessionId, list);
+  }
+
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    ownerId: row.ownerId,
+    workshopCode: row.workshopCode,
+    workshopStatus: row.workshopStatus ?? "draft",
+    workshopAllowReadAfterClose: Boolean(row.workshopAllowReadAfterClose ?? true),
+    workshopAllowAi: Boolean(row.workshopAllowAi ?? true),
+    workshopClosedAt: row.workshopClosedAt ? new Date(row.workshopClosedAt).toISOString() : null,
+    createdAt: new Date(row.createdAt).toISOString(),
+    updatedAt: new Date(row.updatedAt).toISOString(),
+    memberCount: Number(row.memberCount),
+    storyCount: Number(row.storyCount),
+    members: membersBySessionId.get(row.id) ?? [],
+  }));
+}
+
+export async function updateManagedWorkshopSession(
+  sessionId: string,
+  ownerId: string,
+  data: {
+    name?: string;
+    workshopStatus?: "draft" | "open" | "closed";
+    workshopAllowReadAfterClose?: boolean;
+    workshopAllowAi?: boolean;
+  }
+) {
+  const updates: Prisma.Sql[] = [];
+  if (data.name !== undefined) updates.push(Prisma.sql`"name" = ${data.name.trim() || "Untitled group"}`);
+  if (data.workshopStatus !== undefined) {
+    updates.push(Prisma.sql`"workshopStatus" = ${data.workshopStatus}`);
+    updates.push(
+      data.workshopStatus === "closed"
+        ? Prisma.sql`"workshopClosedAt" = NOW()`
+        : Prisma.sql`"workshopClosedAt" = NULL`
+    );
+  }
+  if (data.workshopAllowReadAfterClose !== undefined) {
+    updates.push(Prisma.sql`"workshopAllowReadAfterClose" = ${data.workshopAllowReadAfterClose}`);
+  }
+  if (data.workshopAllowAi !== undefined) {
+    updates.push(Prisma.sql`"workshopAllowAi" = ${data.workshopAllowAi}`);
+  }
+
+  if (updates.length === 0) return;
+
+  await prisma.$executeRaw(Prisma.sql`
+    UPDATE "Session"
+    SET ${Prisma.join(updates, ", ")}, "updatedAt" = NOW()
+    WHERE "id" = ${sessionId} AND "ownerId" = ${ownerId} AND "isGroup" = true
+  `);
+}
+
+export async function transferWorkshopOwner(
+  sessionId: string,
+  currentOwnerId: string,
+  nextOwnerId: string
+) {
+  const trimmedNextOwnerId = nextOwnerId.trim();
+  if (!trimmedNextOwnerId) {
+    throw new Error("nextOwnerId is required.");
+  }
+
+  const updated = await prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
+    UPDATE "Session"
+    SET "ownerId" = ${trimmedNextOwnerId}, "updatedAt" = NOW()
+    WHERE "id" = ${sessionId} AND "ownerId" = ${currentOwnerId} AND "isGroup" = true
+    RETURNING "id"
+  `);
+
+  if (!updated[0]) {
+    return { ok: false as const };
+  }
+
+  await prisma.groupMember.upsert({
+    where: { sessionId_userId: { sessionId, userId: trimmedNextOwnerId } },
+    create: { sessionId, userId: trimmedNextOwnerId, role: "owner" },
+    update: { role: "owner" },
+  });
+
+  if (trimmedNextOwnerId !== currentOwnerId) {
+    await prisma.groupMember.upsert({
+      where: { sessionId_userId: { sessionId, userId: currentOwnerId } },
+      create: { sessionId, userId: currentOwnerId, role: "member" },
+      update: { role: "member" },
+    });
+  }
+
+  return { ok: true as const };
+}
+
+export async function generateWorkshopCode(sessionId: string, ownerId: string) {
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const code = randomBytes(4).toString("hex").toUpperCase();
+    try {
+      const updated = await prisma.$queryRaw<{ workshopCode: string }[]>(Prisma.sql`
+        UPDATE "Session"
+        SET "workshopCode" = ${code}, "updatedAt" = NOW()
+        WHERE "id" = ${sessionId} AND "ownerId" = ${ownerId} AND "isGroup" = true
+        RETURNING "workshopCode"
+      `);
+      if (updated[0]?.workshopCode) return updated[0].workshopCode;
+    } catch (error) {
+      if (attempt === 5) throw error;
+    }
+  }
+  throw new Error("Failed to generate workshop code.");
+}
+
+export async function joinGroupSessionByWorkshopCode(
+  code: string,
+  userId: string,
+  _userEmail?: string | null
+) {
+  const normalizedCode = code.trim().toUpperCase();
+  const rows = await prisma.$queryRaw<
+    {
+      id: string;
+      workshopStatus: string | null;
+    }[]
+  >(Prisma.sql`
+    SELECT "id", "workshopStatus"
+    FROM "Session"
+    WHERE "isGroup" = true AND "workshopCode" = ${normalizedCode}
+    LIMIT 1
+  `);
+
+  const session = rows[0];
+  if (!session) return { ok: false as const, reason: "not_found" as const };
+  if ((session.workshopStatus ?? "draft") !== "open") {
+    return { ok: false as const, reason: "closed" as const, sessionId: session.id };
+  }
+
+  await addGroupMember(session.id, userId, "member");
+  return { ok: true as const, sessionId: session.id };
+}
+
+export async function listWorkshopStories(sessionId: string, ownerId: string) {
+  const access = await canManageSession(sessionId, ownerId);
+  if (!access.allowed || !access.info?.isGroup) return null;
+  return prisma.storyDraft.findMany({
+    where: { sessionId },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, content: true, model: true, createdAt: true },
+  });
+}
+
+export async function buildWorkshopExport(sessionId: string, ownerId: string) {
+  const access = await canManageSession(sessionId, ownerId);
+  if (!access.allowed || !access.info?.isGroup) return null;
+
+  const [session, stories, members] = await Promise.all([
+    prisma.session.findUnique({ where: { id: sessionId } }),
+    prisma.storyDraft.findMany({ where: { sessionId }, orderBy: { createdAt: "asc" } }),
+    prisma.groupMember.findMany({ where: { sessionId }, orderBy: { joinedAt: "asc" } }),
+  ]);
+
+  if (!session) return null;
+  return {
+    exportedAt: new Date().toISOString(),
+    session: {
+      id: session.id,
+      name: session.name,
+      snapshot: JSON.parse(session.snapshot),
+      workshopCode: session.workshopCode,
+      workshopStatus: session.workshopStatus,
+      workshopAllowReadAfterClose: session.workshopAllowReadAfterClose,
+      workshopAllowAi: session.workshopAllowAi,
+      workshopClosedAt: session.workshopClosedAt?.toISOString() ?? null,
+      createdAt: session.createdAt.toISOString(),
+      updatedAt: session.updatedAt.toISOString(),
+    },
+    members: members.map((member) => ({
+      userId: member.userId,
+      role: member.role,
+      joinedAt: member.joinedAt.toISOString(),
+    })),
+    stories: stories.map((story) => ({
+      id: story.id,
+      content: story.content,
+      model: story.model,
+      createdAt: story.createdAt.toISOString(),
+    })),
+  };
+}
+
 export async function getSessionRecord(sessionId: string) {
   const record = await prisma.session.findUnique({
     where: { id: sessionId },
@@ -181,6 +440,9 @@ type SessionAccessInfo = {
   ownerId: string | null;
   isGroup: boolean;
   isPublic: boolean;
+  workshopStatus: string;
+  workshopAllowReadAfterClose: boolean;
+  workshopAllowAi: boolean;
 };
 
 export async function getSessionAccessInfo(sessionId: string): Promise<SessionAccessInfo | null> {
@@ -189,10 +451,20 @@ export async function getSessionAccessInfo(sessionId: string): Promise<SessionAc
     ownerId: string | null;
     isGroup: boolean | number;
     isPublic: boolean | number;
+    workshopStatus: string | null;
+    workshopAllowReadAfterClose: boolean | number | null;
+    workshopAllowAi: boolean | number | null;
   };
 
   const rows = await prisma.$queryRaw<SessionAccessRow[]>(Prisma.sql`
-    SELECT "id", "ownerId", "isGroup", "isPublic"
+    SELECT
+      "id",
+      "ownerId",
+      "isGroup",
+      "isPublic",
+      "workshopStatus",
+      "workshopAllowReadAfterClose",
+      "workshopAllowAi"
     FROM "Session"
     WHERE "id" = ${sessionId}
     LIMIT 1
@@ -206,6 +478,9 @@ export async function getSessionAccessInfo(sessionId: string): Promise<SessionAc
     ownerId: row.ownerId,
     isGroup: Boolean(row.isGroup),
     isPublic: Boolean(row.isPublic),
+    workshopStatus: row.workshopStatus ?? "draft",
+    workshopAllowReadAfterClose: Boolean(row.workshopAllowReadAfterClose ?? true),
+    workshopAllowAi: Boolean(row.workshopAllowAi ?? true),
   };
 }
 
@@ -238,7 +513,10 @@ export async function canReadSession(
 
   if (info.isGroup) {
     const allowed = userId ? await isGroupSessionMember(sessionId, userId, userEmail) : false;
-    return { exists: true as const, allowed, info };
+    const isOwner = Boolean(userId && info.ownerId === userId);
+    const readAllowed =
+      allowed && (isOwner || info.workshopStatus !== "closed" || info.workshopAllowReadAfterClose);
+    return { exists: true as const, allowed: readAllowed, info };
   }
 
   const allowed = Boolean(userId && info.ownerId === userId);
@@ -255,11 +533,25 @@ export async function canWriteSession(
 
   if (info.isGroup) {
     const allowed = userId ? await isGroupSessionMember(sessionId, userId, userEmail) : false;
-    return { exists: true as const, allowed, info };
+    const isOwner = Boolean(userId && info.ownerId === userId);
+    const writeAllowed = allowed && (isOwner || info.workshopStatus !== "closed");
+    return { exists: true as const, allowed: writeAllowed, info };
   }
 
   const allowed = Boolean(userId && info.ownerId === userId);
   return { exists: true as const, allowed, info };
+}
+
+export async function canUseSessionAi(
+  sessionId: string,
+  userId?: string,
+  userEmail?: string | null
+) {
+  const writeAccess = await canWriteSession(sessionId, userId, userEmail);
+  if (!writeAccess.allowed) return writeAccess;
+  const isOwner = Boolean(userId && writeAccess.info?.ownerId === userId);
+  const aiAllowed = Boolean(isOwner || writeAccess.info?.workshopAllowAi);
+  return { ...writeAccess, allowed: aiAllowed };
 }
 
 export async function canManageSession(sessionId: string, userId?: string) {

@@ -1,13 +1,19 @@
 import { NextResponse } from "next/server";
 import { getOpenAIClient } from "@/lib/server/openai";
+import { createClient as createSupabaseServerClient } from "@/lib/supabase/server";
 import { FieldDef } from "@/lib/templates/fieldSchema";
+import { getUser } from "@/lib/auth/actions";
+import { canUseSessionAi } from "@/lib/server/session-store";
 
 type RequestBody = {
+  sessionId?: string;
   label: string;
   description?: string | null;
   fieldDefs: FieldDef[];
   fields: Record<string, string>;
 };
+
+const GENERATED_IMAGE_BUCKET = process.env.SUPABASE_GENERATED_IMAGES_BUCKET || "generated-images";
 
 export async function POST(request: Request) {
   try {
@@ -15,6 +21,15 @@ export async function POST(request: Request) {
 
     if (!body.label || !body.fieldDefs?.length || !body.fields) {
       return NextResponse.json({ error: "画像生成に必要な入力が不足しています。" }, { status: 400 });
+    }
+
+    const user = await getUser();
+    if (!user || !body.sessionId) {
+      return NextResponse.json({ error: "ログインとセッション情報が必要です。" }, { status: 401 });
+    }
+    const aiAccess = await canUseSessionAi(body.sessionId, user.id, user.email);
+    if (!aiAccess.allowed) {
+      return NextResponse.json({ error: "このセッションではAI利用が停止されています。" }, { status: 403 });
     }
 
     const promptLines = body.fieldDefs
@@ -49,9 +64,36 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "画像生成結果を取得できませんでした。" }, { status: 502 });
     }
 
+    const supabase = await createSupabaseServerClient();
+    const storagePath = `intent-images/${crypto.randomUUID()}.png`;
+    const imageBuffer = Buffer.from(imageBase64, "base64");
+    const { error: uploadError } = await supabase.storage
+      .from(GENERATED_IMAGE_BUCKET)
+      .upload(storagePath, imageBuffer, {
+        contentType: "image/png",
+        cacheControl: "31536000",
+        upsert: false,
+      });
+
+    if (uploadError) {
+      console.error("Failed to upload generated image", uploadError);
+      return NextResponse.json(
+        {
+          error:
+            "生成画像の保存に失敗しました。Supabase Storageのバケット設定を確認してください。",
+        },
+        { status: 500 }
+      );
+    }
+
+    const { data: publicUrlData } = supabase.storage
+      .from(GENERATED_IMAGE_BUCKET)
+      .getPublicUrl(storagePath);
+
     return NextResponse.json({
-      imageUrl: `data:image/png;base64,${imageBase64}`,
+      imageUrl: publicUrlData.publicUrl,
       model: process.env.OPENAI_IMAGE_MODEL || "gpt-image-1",
+      storagePath,
     });
   } catch (error) {
     console.error("Failed to generate image", error);

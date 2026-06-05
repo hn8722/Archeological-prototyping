@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { getOpenAIClient, getOpenAIModel } from "@/lib/server/openai";
+import { AP_CROSS_GENERATION_EDGES, AP_TEMPLATE_EDGES, AP_TEMPLATE_NODES } from "@/lib/templates/apTemplate";
 import { FieldDef } from "@/lib/templates/fieldSchema";
+import { MODEL_DESCRIPTIONS } from "@/lib/templates/modelDescriptions";
+import { getUser } from "@/lib/auth/actions";
+import { canUseSessionAi } from "@/lib/server/session-store";
 
 type SessionEntry = {
   label: string;
@@ -9,6 +13,7 @@ type SessionEntry = {
 };
 
 type RequestBody = {
+  sessionId?: string;
   label?: string;
   description?: string;
   fieldDefs?: FieldDef[];
@@ -233,21 +238,104 @@ user experiences into avant-garde problems."
 
 `;
 
-const FEW_SHOT_EXAMPLES = `
-【推論の例】
+const FEW_SHOT_CASES = [
+  {
+    target: "コミュニティ化",
+    related: ["前衛的社会問題"],
+    text: [
+      "例: 「前衛的社会問題」に「Extinction Rebellionが、石油依存経済が生態系を破壊するという問題を提起している」とある場合、",
+      "→ communityName: \"Extinction Rebellion に共感する若者・研究者・市民活動家のローカルグループ\"",
+      "→ content: \"月1回の街頭デモと週次のオンライン勉強会を通じて、気候危機を自分事として捉えるコミュニティを形成している\"",
+    ].join("\n"),
+  },
+  {
+    target: "組織化",
+    related: ["社会の目標"],
+    text: [
+      "例: 「社会の目標」に「高齢者の孤独死が都市部で発生し、行政の把握が困難な状況にある」とある場合、",
+      "→ orgName: \"NPO法人つながり訪問隊と地域の見守りサービス事業者\"",
+      "→ purpose: \"定期訪問とセンサー通知を組み合わせ、高齢者の孤立を早期に発見して支援につなげる\"",
+    ].join("\n"),
+  },
+  {
+    target: "前衛的社会問題",
+    related: ["アート"],
+    text: [
+      "例: 「アート」に「アーティストが難民の救命胴衣を展示し、移民政策への無関心を批判している」とある場合、",
+      "→ category: \"人文環境問題\"",
+      "→ subCategory: \"倫理\"",
+      "→ content: \"欧州の移民受け入れ制度が書類審査を優先し、海難事故や収容施設での人権侵害を見落としている問題\"",
+    ].join("\n"),
+  },
+];
 
-例1: 「前衛的社会問題」に「Extinction Rebellion（気候変動を理由に経済活動を停止させようとする活動家グループ）が、石油依存経済が生態系を破壊するという問題を提起している」と入力され、「コミュニティ化」を埋める場合：
-→ who: "Extinction Rebellion に共感する若者・研究者・市民活動家"
-→ content: "月1回の街頭デモと週次のオンライン勉強会を通じて、気候危機を自分事として捉える緩やかなコミュニティを形成している"
+function buildLocalApGuidance(targetLabel: string) {
+  const allEdges = [...AP_TEMPLATE_EDGES, ...AP_CROSS_GENERATION_EDGES];
+  const targetNode = AP_TEMPLATE_NODES.find((node) => node.label === targetLabel);
+  const targetEdge = allEdges.find((edge) => edge.label === targetLabel);
 
-例2: 「社会の目標」に「高齢者の孤独死が都市部で年間3万件以上発生し、行政の把握が困難な状況にある」、「組織化」を埋める場合：
-→ orgName: "NPO法人「つながり訪問隊」および民間企業のシニア見守りサービス各社"
-→ purpose: "週1回の安否確認訪問と IoT センサーによるリアルタイム見守りを組み合わせ、孤独死ゼロを目指す"
+  const lines = [
+    "あなたはArcheological Prototyping（AP）の入力補助者です。",
+    "今回の補助ではAP全体を完成させるのではなく、対象要素と直接つながる1-hopの関係だけを使います。",
+    "未提示の遠い要素や、AP全体構造からの飛躍した因果は推測しないでください。",
+  ];
 
-例3: 「アート」に「アーティストのAi Weiweiが、難民の救命胴衣14,000着をベルリン・コンサートホールに展示し、移民政策の無関心を批判している」、「前衛的社会問題」を埋める場合：
-→ name: "移民・難民政策の人道的欠陥"
-→ content: "欧州の移民受け入れ制度が書類審査を優先するあまり、地中海での溺死・収容施設での人権侵害が先進国市民に認識されていない問題"
-`;
+  if (targetNode) {
+    const localEdges = allEdges.filter((edge) => edge.source === targetNode.id || edge.target === targetNode.id);
+    const relatedNodeIds = new Set(
+      localEdges.flatMap((edge) => [edge.source, edge.target]).filter((id) => id !== targetNode.id)
+    );
+    const relatedNodes = AP_TEMPLATE_NODES.filter((node) => relatedNodeIds.has(node.id));
+
+    lines.push(`\n【対象要素の説明】\n${targetLabel}: ${MODEL_DESCRIPTIONS[targetLabel] ?? "APモデルの構成要素。"}`);
+
+    if (localEdges.length > 0) {
+      lines.push(
+        "\n【直接つながる関係だけ】",
+        ...localEdges.map((edge) => {
+          const source = AP_TEMPLATE_NODES.find((node) => node.id === edge.source)?.label ?? edge.source;
+          const target = AP_TEMPLATE_NODES.find((node) => node.id === edge.target)?.label ?? edge.target;
+          const edgeDefinition = MODEL_DESCRIPTIONS[edge.label] ?? "対象間を変換する関係。";
+          return `- ${source} --${edge.label}--> ${target}: ${edgeDefinition}`;
+        })
+      );
+    }
+
+    if (relatedNodes.length > 0) {
+      lines.push(
+        "\n【直接つながる要素の説明】",
+        ...relatedNodes.map((node) => `- ${node.label}: ${MODEL_DESCRIPTIONS[node.label] ?? "APモデルの構成要素。"}`)
+      );
+    }
+  } else if (targetEdge) {
+    const source = AP_TEMPLATE_NODES.find((node) => node.id === targetEdge.source)?.label ?? targetEdge.source;
+    const target = AP_TEMPLATE_NODES.find((node) => node.id === targetEdge.target)?.label ?? targetEdge.target;
+
+    lines.push(
+      `\n【対象要素の説明】\n${targetLabel}: ${MODEL_DESCRIPTIONS[targetLabel] ?? "APモデルの構成要素間を変換する関係。"}`,
+      "\n【直接つながる関係だけ】",
+      `- ${source} --${targetLabel}--> ${target}`,
+      "\n【直接つながる要素の説明】",
+      `- ${source}: ${MODEL_DESCRIPTIONS[source] ?? "APモデルの構成要素。"}`,
+      `- ${target}: ${MODEL_DESCRIPTIONS[target] ?? "APモデルの構成要素。"}`
+    );
+  } else {
+    lines.push(`\n【対象要素の説明】\n${targetLabel}: ${MODEL_DESCRIPTIONS[targetLabel] ?? "APモデルの構成要素。"}`);
+  }
+
+  return lines.join("\n");
+}
+
+function buildRelevantExamples(targetLabel: string, contextLabels: string[]) {
+  const contextLabelSet = new Set(contextLabels);
+  const examples = FEW_SHOT_CASES.filter(
+    (item) => item.target === targetLabel || item.related.some((label) => contextLabelSet.has(label))
+  );
+
+  if (examples.length === 0) return "";
+
+  return ["\n【参考例（関連するもののみ）】", ...examples.slice(0, 2).map((item) => item.text)].join("\n\n");
+}
 
 export async function POST(request: Request) {
   try {
@@ -255,6 +343,15 @@ export async function POST(request: Request) {
 
     if (!body.label) {
       return NextResponse.json({ error: "対象ラベルが必要です。" }, { status: 400 });
+    }
+
+    const user = await getUser();
+    if (!user || !body.sessionId) {
+      return NextResponse.json({ error: "ログインとセッション情報が必要です。" }, { status: 401 });
+    }
+    const aiAccess = await canUseSessionAi(body.sessionId, user.id, user.email);
+    if (!aiAccess.allowed) {
+      return NextResponse.json({ error: "このセッションではAI利用が停止されています。" }, { status: 403 });
     }
 
     const client = getOpenAIClient();
@@ -289,9 +386,16 @@ export async function POST(request: Request) {
       ?.map((def) => `"${def.key}": "${def.label}に入る内容"`)
       .join(",\n  ") ?? "";
 
+    const contextLabels = [
+      ...(body.sessionNodes ?? []).map((item) => item.label),
+      ...(body.sessionEdges ?? []).map((item) => item.label),
+    ];
+    const localApGuidance = buildLocalApGuidance(body.label);
+    const relevantExamples = buildRelevantExamples(body.label, contextLabels);
+
     const prompt = [
-      AP_STRUCTURE_EXPLANATION,
-      FEW_SHOT_EXAMPLES,
+      localApGuidance,
+      relevantExamples,
       sessionContext,
       `\n【今回埋めるモデル】`,
       `対象: ${body.label}`,
@@ -299,9 +403,11 @@ export async function POST(request: Request) {
       `\n【現在の入力状況】`,
       currentFieldsText || "  すべて未入力",
       `\n【指示】`,
-      `上記のセッション全体の文脈を踏まえ、帰納的に推論して「${body.label}」の各フィールドを埋めてください。`,
-      `抽象的な説明ではなく、具体的な固有名詞・主体・行動を含む内容にしてください。`,
-      `他の入力済み項目と矛盾しない、一貫したストーリーを維持してください。`,
+      `上記の1-hop文脈と対象要素の説明だけを根拠に、「${body.label}」の各フィールドを埋めてください。`,
+      `直接渡されていない遠いAP要素や、未入力の関係性を補って断定しないでください。`,
+      `抽象的な説明ではなく、参加者が確認・修正できる程度に具体的な主体・行動・場面を含めてください。`,
+      `ただし、文脈にない固有名詞、数値、実在組織名は無理に作らず、必要なら一般名詞で具体化してください。`,
+      `他の入力済み項目と矛盾しない範囲に留めてください。`,
       `\n以下のJSONフォーマットのみを返してください（前置きや説明は不要）：`,
       `{`,
       `  ${fieldSchema}`,

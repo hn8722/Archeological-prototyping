@@ -53,7 +53,7 @@ export const AP_TEMPLATE_NODES: TemplateNodeDefinition[] = [
   },
   {
     id: "n6",
-    label: "人々の価値観",
+    label: "ペルソナ",
     x: 640,
     y: 310,
     color: "#f3ce2a",

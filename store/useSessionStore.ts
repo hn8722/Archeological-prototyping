@@ -5,6 +5,7 @@ import {
   EdgeEntry,
   EntryStatus,
   FieldEntry,
+  GenerationModel,
   NodeEntry,
   SelectedTarget,
   SessionModel,
@@ -12,6 +13,7 @@ import {
 } from "@/lib/types/ap";
 import { combineFieldEntries, hasAnyCompletedEntry } from "@/lib/templates/fieldSchema";
 import { applySessionPatch, normalizeSession } from "@/lib/session/patch";
+import { createGeneration } from "@/lib/templates/createGeneration";
 
 function createMutationId() {
   return typeof crypto !== "undefined"
@@ -38,6 +40,42 @@ function buildPatch(
   };
 }
 
+function buildGenerationPatch(
+  session: SessionModel,
+  generationIndex: number,
+  generation: GenerationModel
+): SessionPatch {
+  return {
+    mutationId: createMutationId(),
+    sessionId: session.id,
+    baseRevision: session.revision,
+    nextRevision: session.revision + 1,
+    generationIndex,
+    targetKind: "generation",
+    entryId: String(generationIndex),
+    entry: generation,
+  };
+}
+
+function buildAppendFieldEntryPatch(
+  session: SessionModel,
+  targetKind: "nodeFieldEntryAppend" | "edgeFieldEntryAppend",
+  generationIndex: number,
+  entryId: string,
+  fieldEntry: FieldEntry
+): SessionPatch {
+  return {
+    mutationId: createMutationId(),
+    sessionId: session.id,
+    baseRevision: session.revision,
+    nextRevision: session.revision + 1,
+    generationIndex,
+    targetKind,
+    entryId,
+    entry: fieldEntry,
+  };
+}
+
 type SessionStore = {
   session: SessionModel | null;
   lastMutation: SessionPatch | null;
@@ -48,6 +86,9 @@ type SessionStore = {
   applyRemotePatch: (patch: SessionPatch) => void;
   selectTarget: (target: SelectedTarget) => void;
   setActiveGeneration: (generation: number) => void;
+  ensureGeneration: (generation: number) => void;
+  appendNodeFieldEntry: (generationIndex: number, nodeId: string, fieldEntry: FieldEntry) => void;
+  appendEdgeFieldEntry: (generationIndex: number, edgeId: string, fieldEntry: FieldEntry) => void;
   setNodeFieldEntries: (generationIndex: number, nodeId: string, fieldEntries: FieldEntry[]) => void;
   setEdgeFieldEntries: (generationIndex: number, edgeId: string, fieldEntries: FieldEntry[]) => void;
   updateEdgeText: (generationIndex: number, edgeId: string, text: string) => void;
@@ -109,6 +150,81 @@ export const useSessionStore = create<SessionStore>((set) => ({
           }
         : null,
     })),
+
+  ensureGeneration: (generationIndex) =>
+    set((state) => {
+      if (!state.session) return state;
+
+      const session = normalizeSession(state.session);
+      const existingGeneration = session.generations.find(
+        (generation) => generation.generationIndex === generationIndex
+      );
+
+      if (existingGeneration) {
+        return {
+          activeGeneration: generationIndex,
+          selectedTarget: null,
+          session: {
+            ...session,
+            activeGeneration: generationIndex,
+          },
+        };
+      }
+
+      const nextGeneration = createGeneration(generationIndex);
+      const patch = buildGenerationPatch(session, generationIndex, nextGeneration);
+      const nextSession = applySessionPatch(session, patch);
+      if (!nextSession) return state;
+
+      return {
+        activeGeneration: generationIndex,
+        selectedTarget: null,
+        session: nextSession,
+        lastMutation: patch,
+      };
+    }),
+
+  appendNodeFieldEntry: (generationIndex, nodeId, fieldEntry) =>
+    set((state) => {
+      if (!state.session) return state;
+
+      const session = normalizeSession(state.session);
+      const patch = buildAppendFieldEntryPatch(
+        session,
+        "nodeFieldEntryAppend",
+        generationIndex,
+        nodeId,
+        fieldEntry
+      );
+      const nextSession = applySessionPatch(session, patch);
+      if (!nextSession) return state;
+
+      return {
+        session: nextSession,
+        lastMutation: patch,
+      };
+    }),
+
+  appendEdgeFieldEntry: (generationIndex, edgeId, fieldEntry) =>
+    set((state) => {
+      if (!state.session) return state;
+
+      const session = normalizeSession(state.session);
+      const patch = buildAppendFieldEntryPatch(
+        session,
+        "edgeFieldEntryAppend",
+        generationIndex,
+        edgeId,
+        fieldEntry
+      );
+      const nextSession = applySessionPatch(session, patch);
+      if (!nextSession) return state;
+
+      return {
+        session: nextSession,
+        lastMutation: patch,
+      };
+    }),
 
   setNodeFieldEntries: (generationIndex, nodeId, fieldEntries) =>
     set((state) => {

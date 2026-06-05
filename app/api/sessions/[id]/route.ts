@@ -26,7 +26,7 @@ export async function GET(
       return NextResponse.json({ error: "このセッションを閲覧する権限がありません。" }, { status: 403 });
     }
     const session = await getSessionRecord(id);
-    return NextResponse.json({ session, persisted: true });
+    return NextResponse.json({ session, persisted: true, isGroup: Boolean(access.info?.isGroup) });
   } catch (error) {
     console.error("Failed to fetch session", error);
     return NextResponse.json({ error: "セッションの取得に失敗しました。" }, { status: 500 });
