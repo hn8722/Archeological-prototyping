@@ -2,11 +2,8 @@ import { NextResponse } from "next/server";
 import { getOpenAIClient } from "@/lib/server/openai";
 import { createClient as createSupabaseServerClient } from "@/lib/supabase/server";
 import { FieldDef } from "@/lib/templates/fieldSchema";
-import { getUser } from "@/lib/auth/actions";
-import { canUseSessionAi } from "@/lib/server/session-store";
 
 type RequestBody = {
-  sessionId?: string;
   label: string;
   description?: string | null;
   fieldDefs: FieldDef[];
@@ -23,15 +20,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "画像生成に必要な入力が不足しています。" }, { status: 400 });
     }
 
-    const user = await getUser();
-    if (!user || !body.sessionId) {
-      return NextResponse.json({ error: "ログインとセッション情報が必要です。" }, { status: 401 });
-    }
-    const aiAccess = await canUseSessionAi(body.sessionId, user.id, user.email);
-    if (!aiAccess.allowed) {
-      return NextResponse.json({ error: "このセッションではAI利用が停止されています。" }, { status: 403 });
-    }
-
     const promptLines = body.fieldDefs
       .map((def) => {
         const value = body.fields[def.key]?.trim();
@@ -45,8 +33,9 @@ export async function POST(request: Request) {
 
     const client = getOpenAIClient();
     const response = await client.images.generate({
-      model: process.env.OPENAI_IMAGE_MODEL || "gpt-image-1",
+      model: process.env.OPENAI_IMAGE_MODEL || "gpt-image-2",
       size: "1024x1024",
+      quality:"medium",
       prompt: [
         "Archeological PrototypingのUX確認用イメージを生成してください。",
         `対象モデル: ${body.label}`,
@@ -92,7 +81,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       imageUrl: publicUrlData.publicUrl,
-      model: process.env.OPENAI_IMAGE_MODEL || "gpt-image-1",
+      model: process.env.OPENAI_IMAGE_MODEL || "gpt-image-2",
       storagePath,
     });
   } catch (error) {
