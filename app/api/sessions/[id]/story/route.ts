@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { getOpenAIClient, getOpenAIModel } from "@/lib/server/openai";
 import { AP_CROSS_GENERATION_EDGES } from "@/lib/templates/apTemplate";
 import { SessionModel } from "@/lib/types/ap";
@@ -8,6 +9,7 @@ import {
   canReadSession,
   getSessionRecord,
   saveStoryDraft,
+  WORKSHOP_PARTICIPANT_COOKIE,
 } from "@/lib/server/session-store";
 import { getUser } from "@/lib/auth/actions";
 
@@ -87,7 +89,8 @@ export async function POST(
   try {
     const { id } = await context.params;
     const user = await getUser();
-    const access = await canReadSession(id, user?.id);
+    const participantToken = (await cookies()).get(WORKSHOP_PARTICIPANT_COOKIE)?.value;
+    const access = await canReadSession(id, user?.id, user?.email, participantToken);
     if (!access.exists) {
       return NextResponse.json({ error: "セッションが見つかりません。" }, { status: 404 });
     }
@@ -106,7 +109,7 @@ export async function POST(
     const model = getOpenAIModel();
 
     if (action === "save") {
-      const writeAccess = await canWriteSession(id, user?.id, user?.email);
+      const writeAccess = await canWriteSession(id, user?.id, user?.email, participantToken);
       if (!writeAccess.allowed) {
         return NextResponse.json({ error: "このセッションに小説を保存する権限がありません。" }, { status: 403 });
       }
@@ -125,7 +128,7 @@ export async function POST(
       return NextResponse.json({ error: "小説生成に使うペルソナを選択してください。" }, { status: 400 });
     }
 
-    const aiAccess = await canUseSessionAi(id, user?.id, user?.email);
+    const aiAccess = await canUseSessionAi(id, user?.id, user?.email, participantToken);
     if (!aiAccess.allowed) {
       return NextResponse.json({ error: "このセッションではAI利用が停止されています。" }, { status: 403 });
     }

@@ -1,9 +1,13 @@
+import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { getOpenAIClient } from "@/lib/server/openai";
 import { createClient as createSupabaseServerClient } from "@/lib/supabase/server";
 import { FieldDef } from "@/lib/templates/fieldSchema";
+import { getUser } from "@/lib/auth/actions";
+import { canUseSessionAi, WORKSHOP_PARTICIPANT_COOKIE } from "@/lib/server/session-store";
 
 type RequestBody = {
+  sessionId?: string;
   label: string;
   description?: string | null;
   fieldDefs: FieldDef[];
@@ -18,6 +22,16 @@ export async function POST(request: Request) {
 
     if (!body.label || !body.fieldDefs?.length || !body.fields) {
       return NextResponse.json({ error: "画像生成に必要な入力が不足しています。" }, { status: 400 });
+    }
+
+    const user = await getUser();
+    const participantToken = (await cookies()).get(WORKSHOP_PARTICIPANT_COOKIE)?.value;
+    if (!body.sessionId) {
+      return NextResponse.json({ error: "セッション情報が必要です。" }, { status: 401 });
+    }
+    const aiAccess = await canUseSessionAi(body.sessionId, user?.id, user?.email, participantToken);
+    if (!aiAccess.allowed) {
+      return NextResponse.json({ error: "このセッションではAI利用が停止されています。" }, { status: 403 });
     }
 
     const promptLines = body.fieldDefs

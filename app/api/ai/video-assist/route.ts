@@ -1,8 +1,9 @@
+import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { getOpenAIClient, getOpenAIModel } from "@/lib/server/openai";
 import { FieldDef } from "@/lib/templates/fieldSchema";
 import { getUser } from "@/lib/auth/actions";
-import { canUseSessionAi } from "@/lib/server/session-store";
+import { canUseSessionAi, WORKSHOP_PARTICIPANT_COOKIE } from "@/lib/server/session-store";
 
 type RequestBody = {
   sessionId?: string;
@@ -70,10 +71,11 @@ export async function POST(request: Request) {
     }
 
     const user = await getUser();
-    if (!user || !body.sessionId) {
-      return NextResponse.json({ error: "ログインとセッション情報が必要です。" }, { status: 401 });
+    const participantToken = (await cookies()).get(WORKSHOP_PARTICIPANT_COOKIE)?.value;
+    if (!body.sessionId) {
+      return NextResponse.json({ error: "セッション情報が必要です。" }, { status: 401 });
     }
-    const aiAccess = await canUseSessionAi(body.sessionId, user.id, user.email);
+    const aiAccess = await canUseSessionAi(body.sessionId, user?.id, user?.email, participantToken);
     if (!aiAccess.allowed) {
       return NextResponse.json({ error: "このセッションではAI利用が停止されています。" }, { status: 403 });
     }

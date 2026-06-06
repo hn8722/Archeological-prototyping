@@ -22,8 +22,10 @@ type WorkshopSession = {
   createdAt: string;
   updatedAt: string;
   memberCount: number;
+  participantCount: number;
   storyCount: number;
   members: WorkshopMember[];
+  participants: { id: string; name: string; joinedAt: string; lastSeenAt: string | null }[];
 };
 
 type WorkshopStory = {
@@ -225,7 +227,7 @@ export function WorkshopAdminClient() {
   };
 
   const totalMembers = useMemo(
-    () => sessions.reduce((sum, session) => sum + session.memberCount, 0),
+    () => sessions.reduce((sum, session) => sum + session.memberCount + session.participantCount, 0),
     [sessions]
   );
 
@@ -329,7 +331,7 @@ export function WorkshopAdminClient() {
                 )}
 
                 <div className="workshop-metrics">
-                  <span>参加者 {session.memberCount}</span>
+                  <span>参加者 {session.memberCount + session.participantCount}</span>
                   <span>オンライン {onlineCounts[session.id] ?? 0}</span>
                   <span>小説 {session.storyCount}</span>
                 </div>
@@ -361,10 +363,16 @@ export function WorkshopAdminClient() {
 
                 <details className="workshop-members">
                   <summary>参加者名一覧</summary>
-                  {session.members.length === 0 ? (
+                  {session.members.length === 0 && session.participants.length === 0 ? (
                     <p className="admin-muted">参加者はまだいません。</p>
                   ) : (
                     <ul>
+                      {session.participants.map((participant) => (
+                        <li key={participant.id}>
+                          <span>{participant.name}</span>
+                          <small>guest / {formatDate(participant.joinedAt)}</small>
+                        </li>
+                      ))}
                       {session.members.map((member) => (
                         <li key={`${member.userId}-${member.joinedAt}`}>
                           <span>{truncateId(member.userId)}</span>

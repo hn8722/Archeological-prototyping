@@ -21,6 +21,7 @@ model Session {
   workshopClosedAt           DateTime?
   stories                    StoryDraft[]
   members                    GroupMember[]
+  workshopParticipants       WorkshopParticipant[]
   createdAt                  DateTime      @default(now())
   updatedAt                  DateTime      @updatedAt
 
@@ -29,6 +30,19 @@ model Session {
   @@index([isPublic])
   @@index([workshopCode])
   @@index([workshopStatus])
+}
+
+model WorkshopParticipant {
+  id         String    @id @default(cuid())
+  sessionId  String
+  name       String
+  tokenHash  String    @unique
+  joinedAt   DateTime  @default(now())
+  lastSeenAt DateTime?
+  session    Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([joinedAt])
 }
 
 model StoryDraft {

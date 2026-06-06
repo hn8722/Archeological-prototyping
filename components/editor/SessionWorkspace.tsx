@@ -68,14 +68,21 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
         const response = await fetch(`/api/sessions/${sessionId}`, { cache: "no-store" });
         if (!response.ok) throw new Error("Failed to load session");
 
-        const data = (await response.json()) as { session?: SessionModel; isGroup?: boolean };
+        const data = (await response.json()) as {
+          session?: SessionModel;
+          isGroup?: boolean;
+          participant?: { id: string; name: string } | null;
+        };
         const nextSession = data.session ?? mockSession(sessionId);
 
         if (!isActive) return;
         const nextIsGroupSession = Boolean(data.isGroup);
         setIsGroupSession(nextIsGroupSession);
         if (nextIsGroupSession) {
-          const savedName = window.localStorage.getItem(`ap-group-display-name:${sessionId}`) ?? "";
+          const savedName =
+            data.participant?.name ??
+            window.localStorage.getItem(`ap-group-display-name:${sessionId}`) ??
+            "";
           setCollaborationName(savedName);
           setDisplayNameInput(savedName);
         }

@@ -1,3 +1,4 @@
+import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import {
   applySessionPatchRecord,
@@ -7,9 +8,14 @@ import {
   deleteSessionRecord,
   getSessionRecord,
   saveSessionRecord,
+  WORKSHOP_PARTICIPANT_COOKIE,
 } from "@/lib/server/session-store";
 import { getUser } from "@/lib/auth/actions";
 import { SessionModel, SessionPatch } from "@/lib/types/ap";
+
+async function getParticipantToken() {
+  return (await cookies()).get(WORKSHOP_PARTICIPANT_COOKIE)?.value;
+}
 
 export async function GET(
   _request: Request,
@@ -18,15 +24,24 @@ export async function GET(
   try {
     const { id } = await context.params;
     const user = await getUser();
-    const access = await canReadSession(id, user?.id, user?.email);
+    const participantToken = await getParticipantToken();
+    const access = await canReadSession(id, user?.id, user?.email, participantToken);
     if (!access.exists) {
       return NextResponse.json({ error: "セッションが見つかりません。" }, { status: 404 });
     }
     if (!access.allowed) {
       return NextResponse.json({ error: "このセッションを閲覧する権限がありません。" }, { status: 403 });
     }
+
     const session = await getSessionRecord(id);
-    return NextResponse.json({ session, persisted: true, isGroup: Boolean(access.info?.isGroup) });
+    return NextResponse.json({
+      session,
+      persisted: true,
+      isGroup: Boolean(access.info?.isGroup),
+      participant: access.participant
+        ? { id: access.participant.id, name: access.participant.name }
+        : null,
+    });
   } catch (error) {
     console.error("Failed to fetch session", error);
     return NextResponse.json({ error: "セッションの取得に失敗しました。" }, { status: 500 });
@@ -40,16 +55,14 @@ export async function PUT(
   try {
     const { id } = await context.params;
     const user = await getUser();
-    if (!user) {
-      return NextResponse.json({ error: "ログインが必要です。" }, { status: 401 });
-    }
+    const participantToken = await getParticipantToken();
     const body = (await request.json()) as { session?: SessionModel };
 
     if (!body.session || body.session.id !== id) {
       return NextResponse.json({ error: "保存データが不正です。" }, { status: 400 });
     }
 
-    const access = await canWriteSession(id, user.id, user.email);
+    const access = await canWriteSession(id, user?.id, user?.email, participantToken);
     if (!access.exists) {
       return NextResponse.json({ error: "セッションが見つかりません。" }, { status: 404 });
     }
@@ -72,16 +85,14 @@ export async function PATCH(
   try {
     const { id } = await context.params;
     const user = await getUser();
-    if (!user) {
-      return NextResponse.json({ error: "ログインが必要です。" }, { status: 401 });
-    }
+    const participantToken = await getParticipantToken();
     const body = (await request.json()) as { patch?: SessionPatch };
 
     if (!body.patch || body.patch.sessionId !== id) {
       return NextResponse.json({ error: "更新パッチが不正です。" }, { status: 400 });
     }
 
-    const access = await canWriteSession(id, user.id, user.email);
+    const access = await canWriteSession(id, user?.id, user?.email, participantToken);
     if (!access.exists) {
       return NextResponse.json({ error: "セッションが見つかりません。" }, { status: 404 });
     }

@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { prisma } from "@/lib/server/prisma";
 import { Prisma } from "@/generated/prisma/client";
 import { mockSession } from "@/lib/data/mockSession";
@@ -10,6 +10,12 @@ import {
   SessionPatch,
 } from "@/lib/types/ap";
 import { applySessionPatch, normalizeSession } from "@/lib/session/patch";
+
+export const WORKSHOP_PARTICIPANT_COOKIE = "ap_workshop_participant";
+
+function hashWorkshopToken(token: string) {
+  return createHash("sha256").update(token).digest("hex");
+}
 
 export function buildInitialSession(sessionId: string, name?: string): SessionModel {
   const session = mockSession(sessionId);
@@ -180,8 +186,10 @@ export type ManagedWorkshopSession = {
   createdAt: string;
   updatedAt: string;
   memberCount: number;
+  participantCount: number;
   storyCount: number;
   members: { userId: string; role: string; joinedAt: string }[];
+  participants: { id: string; name: string; joinedAt: string; lastSeenAt: string | null }[];
 };
 
 export async function listManagedWorkshopSessions(ownerId: string): Promise<ManagedWorkshopSession[]> {
@@ -197,6 +205,7 @@ export async function listManagedWorkshopSessions(ownerId: string): Promise<Mana
     createdAt: string | Date;
     updatedAt: string | Date;
     memberCount: bigint | number | string;
+    participantCount: bigint | number | string;
     storyCount: bigint | number | string;
   };
 
@@ -213,9 +222,11 @@ export async function listManagedWorkshopSessions(ownerId: string): Promise<Mana
       s."createdAt",
       s."updatedAt",
       COUNT(DISTINCT gm."id") AS "memberCount",
+      COUNT(DISTINCT wp."id") AS "participantCount",
       COUNT(DISTINCT sd."id") AS "storyCount"
     FROM "Session" s
     LEFT JOIN "GroupMember" gm ON gm."sessionId" = s."id"
+    LEFT JOIN "WorkshopParticipant" wp ON wp."sessionId" = s."id"
     LEFT JOIN "StoryDraft" sd ON sd."sessionId" = s."id"
     WHERE s."isGroup" = true AND s."ownerId" = ${ownerId}
     GROUP BY s."id"
@@ -241,6 +252,29 @@ export async function listManagedWorkshopSessions(ownerId: string): Promise<Mana
     membersBySessionId.set(member.sessionId, list);
   }
 
+  const participants = rows.length
+    ? await prisma.workshopParticipant.findMany({
+        where: { sessionId: { in: rows.map((row) => row.id) } },
+        orderBy: { joinedAt: "asc" },
+        select: { id: true, sessionId: true, name: true, joinedAt: true, lastSeenAt: true },
+      })
+    : [];
+
+  const participantsBySessionId = new Map<
+    string,
+    { id: string; name: string; joinedAt: string; lastSeenAt: string | null }[]
+  >();
+  for (const participant of participants) {
+    const list = participantsBySessionId.get(participant.sessionId) ?? [];
+    list.push({
+      id: participant.id,
+      name: participant.name,
+      joinedAt: participant.joinedAt.toISOString(),
+      lastSeenAt: participant.lastSeenAt?.toISOString() ?? null,
+    });
+    participantsBySessionId.set(participant.sessionId, list);
+  }
+
   return rows.map((row) => ({
     id: row.id,
     name: row.name,
@@ -253,8 +287,10 @@ export async function listManagedWorkshopSessions(ownerId: string): Promise<Mana
     createdAt: new Date(row.createdAt).toISOString(),
     updatedAt: new Date(row.updatedAt).toISOString(),
     memberCount: Number(row.memberCount),
+    participantCount: Number(row.participantCount),
     storyCount: Number(row.storyCount),
     members: membersBySessionId.get(row.id) ?? [],
+    participants: participantsBySessionId.get(row.id) ?? [],
   }));
 }
 
@@ -378,6 +414,64 @@ export async function joinGroupSessionByWorkshopCode(
   return { ok: true as const, sessionId: session.id };
 }
 
+export async function createWorkshopParticipantByCode(code: string, name: string) {
+  const normalizedCode = code.trim().toUpperCase();
+  const trimmedName = name.trim();
+  if (!normalizedCode || !trimmedName) {
+    return { ok: false as const, reason: "invalid" as const };
+  }
+
+  const rows = await prisma.$queryRaw<
+    {
+      id: string;
+      workshopStatus: string | null;
+    }[]
+  >(Prisma.sql`
+    SELECT "id", "workshopStatus"
+    FROM "Session"
+    WHERE "isGroup" = true AND "workshopCode" = ${normalizedCode}
+    LIMIT 1
+  `);
+
+  const session = rows[0];
+  if (!session) return { ok: false as const, reason: "not_found" as const };
+  if ((session.workshopStatus ?? "draft") !== "open") {
+    return { ok: false as const, reason: "closed" as const, sessionId: session.id };
+  }
+
+  const token = randomBytes(32).toString("base64url");
+  const participant = await prisma.workshopParticipant.create({
+    data: {
+      sessionId: session.id,
+      name: trimmedName.slice(0, 80),
+      tokenHash: hashWorkshopToken(token),
+      lastSeenAt: new Date(),
+    },
+    select: { id: true, name: true },
+  });
+
+  return { ok: true as const, sessionId: session.id, token, participant };
+}
+
+export async function getWorkshopParticipantForSession(sessionId: string, token?: string | null) {
+  const trimmedToken = token?.trim();
+  if (!trimmedToken) return null;
+
+  const participant = await prisma.workshopParticipant.findUnique({
+    where: { tokenHash: hashWorkshopToken(trimmedToken) },
+    select: { id: true, sessionId: true, name: true, joinedAt: true, lastSeenAt: true },
+  });
+
+  if (!participant || participant.sessionId !== sessionId) return null;
+
+  await prisma.workshopParticipant.update({
+    where: { id: participant.id },
+    data: { lastSeenAt: new Date() },
+  });
+
+  return participant;
+}
+
 export async function listWorkshopStories(sessionId: string, ownerId: string) {
   const access = await canManageSession(sessionId, ownerId);
   if (!access.allowed || !access.info?.isGroup) return null;
@@ -392,10 +486,11 @@ export async function buildWorkshopExport(sessionId: string, ownerId: string) {
   const access = await canManageSession(sessionId, ownerId);
   if (!access.allowed || !access.info?.isGroup) return null;
 
-  const [session, stories, members] = await Promise.all([
+  const [session, stories, members, participants] = await Promise.all([
     prisma.session.findUnique({ where: { id: sessionId } }),
     prisma.storyDraft.findMany({ where: { sessionId }, orderBy: { createdAt: "asc" } }),
     prisma.groupMember.findMany({ where: { sessionId }, orderBy: { joinedAt: "asc" } }),
+    prisma.workshopParticipant.findMany({ where: { sessionId }, orderBy: { joinedAt: "asc" } }),
   ]);
 
   if (!session) return null;
@@ -417,6 +512,12 @@ export async function buildWorkshopExport(sessionId: string, ownerId: string) {
       userId: member.userId,
       role: member.role,
       joinedAt: member.joinedAt.toISOString(),
+    })),
+    participants: participants.map((participant) => ({
+      id: participant.id,
+      name: participant.name,
+      joinedAt: participant.joinedAt.toISOString(),
+      lastSeenAt: participant.lastSeenAt?.toISOString() ?? null,
     })),
     stories: stories.map((story) => ({
       id: story.id,
@@ -506,17 +607,21 @@ function uniqueIdentityValues(...values: Array<string | null | undefined>) {
 export async function canReadSession(
   sessionId: string,
   userId?: string,
-  userEmail?: string | null
+  userEmail?: string | null,
+  participantToken?: string | null
 ) {
   const info = await getSessionAccessInfo(sessionId);
   if (!info) return { exists: false as const, allowed: false as const, info: null };
 
   if (info.isGroup) {
+    const participant = await getWorkshopParticipantForSession(sessionId, participantToken);
     const allowed = userId ? await isGroupSessionMember(sessionId, userId, userEmail) : false;
     const isOwner = Boolean(userId && info.ownerId === userId);
+    const participantAllowed = Boolean(participant);
     const readAllowed =
-      allowed && (isOwner || info.workshopStatus !== "closed" || info.workshopAllowReadAfterClose);
-    return { exists: true as const, allowed: readAllowed, info };
+      (allowed || participantAllowed) &&
+      (isOwner || info.workshopStatus !== "closed" || info.workshopAllowReadAfterClose);
+    return { exists: true as const, allowed: readAllowed, info, participant };
   }
 
   const allowed = Boolean(userId && info.ownerId === userId);
@@ -526,16 +631,19 @@ export async function canReadSession(
 export async function canWriteSession(
   sessionId: string,
   userId?: string,
-  userEmail?: string | null
+  userEmail?: string | null,
+  participantToken?: string | null
 ) {
   const info = await getSessionAccessInfo(sessionId);
   if (!info) return { exists: false as const, allowed: false as const, info: null };
 
   if (info.isGroup) {
+    const participant = await getWorkshopParticipantForSession(sessionId, participantToken);
     const allowed = userId ? await isGroupSessionMember(sessionId, userId, userEmail) : false;
     const isOwner = Boolean(userId && info.ownerId === userId);
-    const writeAllowed = allowed && (isOwner || info.workshopStatus !== "closed");
-    return { exists: true as const, allowed: writeAllowed, info };
+    const participantAllowed = Boolean(participant);
+    const writeAllowed = (allowed || participantAllowed) && (isOwner || info.workshopStatus !== "closed");
+    return { exists: true as const, allowed: writeAllowed, info, participant };
   }
 
   const allowed = Boolean(userId && info.ownerId === userId);
@@ -545,9 +653,10 @@ export async function canWriteSession(
 export async function canUseSessionAi(
   sessionId: string,
   userId?: string,
-  userEmail?: string | null
+  userEmail?: string | null,
+  participantToken?: string | null
 ) {
-  const writeAccess = await canWriteSession(sessionId, userId, userEmail);
+  const writeAccess = await canWriteSession(sessionId, userId, userEmail, participantToken);
   if (!writeAccess.allowed) return writeAccess;
   const isOwner = Boolean(userId && writeAccess.info?.ownerId === userId);
   const aiAllowed = Boolean(isOwner || writeAccess.info?.workshopAllowAi);
