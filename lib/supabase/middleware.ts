@@ -36,17 +36,15 @@ export async function updateSession(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const { pathname } = request.nextUrl;
+  const isAuthPage = pathname === "/login" || pathname.startsWith("/login/");
   const isPublic =
-    pathname === "/login" ||
-    pathname.startsWith("/login/") ||
-    pathname === "/workshop/join" ||
-    pathname.startsWith("/session/");
+    isAuthPage || pathname === "/workshop/join" || pathname.startsWith("/session/");
 
   if (!isPublic && !user) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  if (isPublic && user) {
+  if (isAuthPage && user) {
     return NextResponse.redirect(new URL("/", request.url));
   }
 
