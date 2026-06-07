@@ -22,6 +22,20 @@ type PresencePayload = {
   updatedAt?: number;
 };
 
+function disambiguateNames(members: OnlineMember[]): OnlineMember[] {
+  const counts = new Map<string, number>();
+  for (const m of members) {
+    counts.set(m.displayName, (counts.get(m.displayName) ?? 0) + 1);
+  }
+  const indexes = new Map<string, number>();
+  return members.map((m) => {
+    if ((counts.get(m.displayName) ?? 1) <= 1) return m;
+    const n = (indexes.get(m.displayName) ?? 0) + 1;
+    indexes.set(m.displayName, n);
+    return { ...m, displayName: `${m.displayName} (${n})` };
+  });
+}
+
 function getMemberColor(seed: string) {
   let hash = 0;
   for (const char of seed) {
@@ -72,7 +86,8 @@ export function useOnlineMembers(
         }];
       });
 
-      setMembers(nextMembers.sort((first, second) => first.joinedAt - second.joinedAt));
+      const sorted = nextMembers.sort((first, second) => first.joinedAt - second.joinedAt);
+      setMembers(disambiguateNames(sorted));
     });
 
     channel.subscribe(async (status) => {

@@ -61,6 +61,14 @@ function createEmptyEdgeEntry(templateId: string): EdgeEntry | null {
   });
 }
 
+function isSameFieldEntry(first: FieldEntry, second: FieldEntry) {
+  const firstKeys = Object.keys(first);
+  const secondKeys = Object.keys(second);
+  if (firstKeys.length !== secondKeys.length) return false;
+
+  return firstKeys.every((key) => first[key] === second[key]);
+}
+
 function normalizeGeneration(generation: GenerationModel): GenerationModel {
   const nodes = { ...generation.nodes };
   const edges = { ...generation.edges };
@@ -85,7 +93,9 @@ function normalizeGeneration(generation: GenerationModel): GenerationModel {
 }
 
 function appendNodeFieldEntry(node: NodeEntry, fieldEntry: FieldEntry): NodeEntry {
-  const fieldEntries = [...node.fieldEntries, fieldEntry];
+  const fieldEntries = node.fieldEntries.some((entry) => isSameFieldEntry(entry, fieldEntry))
+    ? node.fieldEntries
+    : [...node.fieldEntries, fieldEntry];
   const text = combineFieldEntries(node.label, fieldEntries);
 
   return normalizeNodeEntry({
@@ -98,7 +108,9 @@ function appendNodeFieldEntry(node: NodeEntry, fieldEntry: FieldEntry): NodeEntr
 }
 
 function appendEdgeFieldEntry(edge: EdgeEntry, fieldEntry: FieldEntry): EdgeEntry {
-  const fieldEntries = [...edge.fieldEntries, fieldEntry];
+  const fieldEntries = edge.fieldEntries.some((entry) => isSameFieldEntry(entry, fieldEntry))
+    ? edge.fieldEntries
+    : [...edge.fieldEntries, fieldEntry];
   const text = combineFieldEntries(edge.label, fieldEntries);
 
   return normalizeEdgeEntry({

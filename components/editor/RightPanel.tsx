@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Bot, SquarePlay } from "lucide-react";
@@ -950,7 +950,7 @@ export function RightPanel({ collaborationPeers = [] }: { collaborationPeers?: O
                 <div className="entry-form-action-buttons">
                   <button type="button" className="button-secondary" onClick={handleAiAssist} disabled={isAiLoading || isReadOnlyEntry} aria-label="AIアシスト">
                     <Bot size={16} />
-                    <span className="icon-tooltip">AIアシスト</span>
+                    <span>{isAiLoading ? "考え中" : "AIアシスト"}</span>
                   </button>
                   <button
                     type="button"
@@ -960,7 +960,7 @@ export function RightPanel({ collaborationPeers = [] }: { collaborationPeers?: O
                     aria-label={requiresImageReview ? "画像のOKで反映" : isEditMode ? "更新" : "追加"}
                   >
                     <SquarePlay size={16} />
-                    <span className="icon-tooltip">
+                    <span>
                       {requiresImageReview ? "画像のOKで反映" : isEditMode ? "更新" : "追加"}
                     </span>
                   </button>
