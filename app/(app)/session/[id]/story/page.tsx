@@ -2,6 +2,7 @@
 
 import { use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { Undo2, Pencil, PencilLine, ArrowDownToLine } from "lucide-react";
 import { useSessionStore } from "@/store/useSessionStore";
 import { FieldEntry, SessionModel } from "@/lib/types/ap";
 import { formatGenerationLabel } from "@/lib/utils/generationLabel";
@@ -625,6 +626,7 @@ export default function StoryPage({
               onClick={handlePreview}
               disabled={isPreviewing || isGenerating}
             >
+              <Pencil size={15} />
               {isPreviewing ? "再生成中..." : "方向性を再生成"}
             </button>
             <button
@@ -633,6 +635,7 @@ export default function StoryPage({
               onClick={handleGenerate}
               disabled={isGenerating}
             >
+              <PencilLine size={15} />
               {isGenerating ? "本文生成中..." : `案${selectedPreviewIndex + 1}で本文生成`}
             </button>
           </div>
@@ -661,9 +664,11 @@ export default function StoryPage({
             onClick={handleSaveStoryToApp}
             disabled={isSavingStory || isStorySaved}
           >
+            <ArrowDownToLine size={15} />
             {isSavingStory ? "保存中..." : isStorySaved ? "アプリに保存済み" : "アプリに保存"}
           </button>
           <button type="button" className="button-secondary" onClick={handleDownloadStory}>
+            <ArrowDownToLine size={15} />
             Markdownで保存
           </button>
         </div>
@@ -674,6 +679,7 @@ export default function StoryPage({
 
       <div className="story-footer-actions">
         <Link href={`/session/${id}`} className="button-secondary">
+          <Undo2 size={15} />
           編集画面へ戻る
         </Link>
         {previews.length === 0 && (
@@ -682,6 +688,7 @@ export default function StoryPage({
             onClick={handlePreview}
             disabled={isPreviewing || isGenerating || !session || personaCandidates.length === 0}
           >
+            <Pencil size={15} />
             {isPreviewing ? "方向性生成中..." : generationStories.length > 0 ? "方向性から作り直す" : "方向性を確認する"}
           </button>
         )}

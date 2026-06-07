@@ -70,11 +70,13 @@ export type SelectedTarget =
       kind: "node";
       id: string;
       entryIndex?: number;
+      mode?: "viewing" | "editing";
     }
   | {
       generation: number;
       kind: "edge";
       id: string;
       entryIndex?: number;
+      mode?: "viewing" | "editing";
     }
   | null;

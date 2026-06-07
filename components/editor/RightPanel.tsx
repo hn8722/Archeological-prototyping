@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Bot, SquarePlay } from "lucide-react";
 import { useSessionStore } from "@/store/useSessionStore";
 import { FieldEntry, NodeEntry, EdgeEntry } from "@/lib/types/ap";
 import { AP_CROSS_GENERATION_EDGES } from "@/lib/templates/apTemplate";
 import { getFieldDefs, areAllFieldsFilled } from "@/lib/templates/fieldSchema";
 import { MODEL_DESCRIPTIONS, MODEL_HINTS } from "@/lib/templates/modelDescriptions";
+import { OnlineMember } from "@/lib/realtime/useOnlineMembers";
 
 type InputMode = "text" | "image" | "video";
 
@@ -143,7 +145,7 @@ function getFilledRelatedItems(items: RelatedItem[]) {
   return items.filter((item) => Boolean(getNormalizedText(item.text)));
 }
 
-export function RightPanel() {
+export function RightPanel({ collaborationPeers = [] }: { collaborationPeers?: OnlineMember[] }) {
   const session = useSessionStore((state) => state.session);
   const selectedTarget = useSessionStore((state) => state.selectedTarget);
   const selectTarget = useSessionStore((state) => state.selectTarget);
@@ -162,6 +164,22 @@ export function RightPanel() {
     if (selectedTarget.kind === "node") return generation.nodes[selectedTarget.id] ?? null;
     return generation.edges[selectedTarget.id] ?? null;
   }, [session, selectedTarget]);
+
+  const entryLockOwner = useMemo(() => {
+    if (!selectedTarget || selectedTarget.entryIndex === undefined) return null;
+
+    return collaborationPeers.find((member) => {
+      const target = member.selectedTarget;
+      return Boolean(
+        target &&
+          target.mode === "editing" &&
+          target.kind === selectedTarget.kind &&
+          target.generation === selectedTarget.generation &&
+          target.id === selectedTarget.id &&
+          target.entryIndex === selectedTarget.entryIndex
+      );
+    }) ?? null;
+  }, [collaborationPeers, selectedTarget]);
 
   const relatedModels = useMemo(() => {
     const empty = {
@@ -309,6 +327,7 @@ export function RightPanel() {
   }, [selectedTarget]);
 
   const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (isReadOnlyEntry) return;
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -324,7 +343,7 @@ export function RightPanel() {
   };
 
   const handleImageAnalyze = async () => {
-    if (!imagePreview || !selectedEntry) return;
+    if (!imagePreview || !selectedEntry || isReadOnlyEntry) return;
     setIsImageAnalyzing(true);
     setImageError(null);
 
@@ -356,7 +375,7 @@ export function RightPanel() {
   };
 
   const handleVideoAnalyze = async () => {
-    if (!videoUrl.trim() || !selectedEntry) return;
+    if (!videoUrl.trim() || !selectedEntry || isReadOnlyEntry) return;
     setIsVideoAnalyzing(true);
     setVideoError(null);
 
@@ -390,6 +409,9 @@ export function RightPanel() {
   const fieldDefs = selectedEntry ? getFieldDefs(selectedEntry.label) : [];
   const hasFieldSchema = fieldDefs.length > 0;
   const isEditMode = selectedTarget?.entryIndex !== undefined;
+  const isReadOnlyEntry = Boolean(
+    isEditMode && (entryLockOwner || selectedTarget?.mode === "viewing")
+  );
 
   // chip とフィールドのマージ
   const mergedEditingFields = useMemo(() => {
@@ -409,11 +431,11 @@ export function RightPanel() {
     selectedEntry && IMAGE_CONFIRMATION_LABELS.has(selectedEntry.label)
   );
   const requiresImageReview = Boolean(generatedImage);
-  const canSubmitEntry = canConfirm && !requiresImageReview;
+  const canSubmitEntry = canConfirm && !requiresImageReview && !isReadOnlyEntry;
   const shouldHighlightImageCheck =
-    canUseImageConfirmation && hasFieldSchema && canConfirm && !generatedImage && !isGeneratingImage;
+    canUseImageConfirmation && hasFieldSchema && canConfirm && !generatedImage && !isGeneratingImage && !isReadOnlyEntry;
   const shouldShowImageCheck =
-    canUseImageConfirmation && hasFieldSchema && (canConfirm || generatedImage || isGeneratingImage);
+    canUseImageConfirmation && hasFieldSchema && (canConfirm || generatedImage || isGeneratingImage) && !isReadOnlyEntry;
   const filledCount = fieldDefs.filter((def) => Boolean((mergedEditingFields[def.key] ?? "").trim())).length;
   const progressPercent = fieldDefs.length > 0 ? (filledCount / fieldDefs.length) * 100 : 0;
 
@@ -424,7 +446,7 @@ export function RightPanel() {
   };
 
   const commitEntry = () => {
-    if (!selectedTarget) return;
+    if (!selectedTarget || isReadOnlyEntry) return;
 
     if (!hasFieldSchema) {
       updateEdgeText(selectedTarget.generation, selectedTarget.id, freeText);
@@ -459,12 +481,12 @@ export function RightPanel() {
   };
 
   const handleConfirm = () => {
-    if (!canSubmitEntry) return;
+    if (!canSubmitEntry || isReadOnlyEntry) return;
     commitEntry();
   };
 
   const handleApproveGeneratedImage = () => {
-    if (!canConfirm) return;
+    if (!canConfirm || isReadOnlyEntry) return;
     setImageReviewStatus("ok");
     commitEntry();
     clearGeneratedImageReview();
@@ -480,7 +502,7 @@ export function RightPanel() {
   };
 
   const handleAiAssist = async () => {
-    if (!selectedEntry || !session) return;
+    if (!selectedEntry || !session || isReadOnlyEntry) return;
     setIsAiLoading(true);
     setAiError(null);
     setAiSuggestions(null);
@@ -524,7 +546,7 @@ export function RightPanel() {
   };
 
   const handleGenerateIntentImage = async () => {
-    if (!selectedEntry || !hasFieldSchema || !canUseImageConfirmation) return;
+    if (!selectedEntry || !hasFieldSchema || !canUseImageConfirmation || isReadOnlyEntry) return;
     setIsGeneratingImage(true);
     setImageGenerationError(null);
     setGeneratedImage(null);
@@ -646,12 +668,21 @@ export function RightPanel() {
             </div>
 
             {/* モード切替タブ（スキーマありのみ） */}
+            {isReadOnlyEntry && (
+              <p className="entry-lock-notice">
+                {entryLockOwner
+                  ? `${entryLockOwner.displayName} が編集中です。内容は閲覧できます。`
+                  : "この記述は閲覧モードです。"}
+              </p>
+            )}
+
             {hasFieldSchema && (
               <div className="input-mode-tabs">
                 <button
                   type="button"
                   className={`input-mode-tab ${inputMode === "text" ? "input-mode-tab-active" : ""}`}
                   onClick={() => setInputMode("text")}
+                  disabled={isReadOnlyEntry}
                   title="テキスト入力"
                 >
                   <TextIcon />
@@ -661,9 +692,11 @@ export function RightPanel() {
                   type="button"
                   className={`input-mode-tab ${inputMode === "image" ? "input-mode-tab-active" : ""}`}
                   onClick={() => {
+                    if (isReadOnlyEntry) return;
                     setInputMode("image");
                     if (!imagePreview) fileInputRef.current?.click();
                   }}
+                  disabled={isReadOnlyEntry}
                   title="画像から入力"
                 >
                   <ImageIcon />
@@ -673,6 +706,7 @@ export function RightPanel() {
                   type="button"
                   className={`input-mode-tab ${inputMode === "video" ? "input-mode-tab-active" : ""}`}
                   onClick={() => setInputMode("video")}
+                  disabled={isReadOnlyEntry}
                   title="動画URLから入力"
                 >
                   <VideoIcon />
@@ -713,6 +747,7 @@ export function RightPanel() {
                               onClick={() =>
                                 setOpenYearPickerKey((current) => (current === def.key ? null : def.key))
                               }
+                              disabled={isReadOnlyEntry}
                               aria-expanded={openYearPickerKey === def.key}
                             >
                               <span>{value || "年を選択"}</span>
@@ -724,6 +759,7 @@ export function RightPanel() {
                               <YearPicker
                                 value={value}
                                 onChange={(year) => {
+                                  if (isReadOnlyEntry) return;
                                   setEditingFields((prev) => ({ ...prev, [def.key]: year }));
                                   setOpenYearPickerKey(null);
                                 }}
@@ -754,7 +790,7 @@ export function RightPanel() {
                                 return next;
                               });
                             }}
-                            disabled={Boolean(def.dependsOn && selectOptions.length === 0)}
+                            disabled={isReadOnlyEntry || Boolean(def.dependsOn && selectOptions.length === 0)}
                           >
                             <option value="" disabled>
                               —
@@ -771,6 +807,7 @@ export function RightPanel() {
                             value={value}
                             onChange={(e) => setEditingFields((prev) => ({ ...prev, [def.key]: e.target.value }))}
                             placeholder={def.placeholder ?? ""}
+                            disabled={isReadOnlyEntry}
                             rows={2}
                           />
                         )}
@@ -783,6 +820,7 @@ export function RightPanel() {
                   className="form-textarea"
                   value={freeText}
                   onChange={(e) => setFreeText(e.target.value)}
+                  disabled={isReadOnlyEntry}
                   placeholder="ここに内容を入力"
                 />
               )}
@@ -813,7 +851,7 @@ export function RightPanel() {
                           : "button-disabled"
                       }
                       onClick={handleGenerateIntentImage}
-                      disabled={!canConfirm || isGeneratingImage}
+                      disabled={!canConfirm || isGeneratingImage || isReadOnlyEntry}
                     >
                       {isGeneratingImage ? "画像生成中..." : generatedImage ? "画像を再生成" : "画像で確認"}
                     </button>
@@ -829,13 +867,18 @@ export function RightPanel() {
                           type="button"
                           className={imageReviewStatus === "ok" ? "button-primary" : "button-secondary"}
                           onClick={handleApproveGeneratedImage}
+                          disabled={isReadOnlyEntry}
                         >
                           OK・反映する
                         </button>
                         <button
                           type="button"
                           className={imageReviewStatus === "insufficient" ? "button-primary" : "button-secondary"}
-                          onClick={() => setImageReviewStatus("insufficient")}
+                          onClick={() => {
+                            if (isReadOnlyEntry) return;
+                            setImageReviewStatus("insufficient");
+                          }}
+                          disabled={isReadOnlyEntry}
                         >
                           不十分
                         </button>
@@ -863,7 +906,11 @@ export function RightPanel() {
                           <button
                             type="button"
                             className="ai-assist-use-button"
-                            onClick={() => setEditingFields((prev) => ({ ...prev, [def.key]: suggestion }))}
+                            onClick={() => {
+                              if (isReadOnlyEntry) return;
+                              setEditingFields((prev) => ({ ...prev, [def.key]: suggestion }));
+                            }}
+                            disabled={isReadOnlyEntry}
                           >
                             使う
                           </button>
@@ -876,11 +923,13 @@ export function RightPanel() {
                     type="button"
                     className="ai-assist-use-all-button"
                     onClick={() => {
+                      if (isReadOnlyEntry) return;
                       const merged = { ...editingFields };
                       fieldDefs.forEach((def) => { if (aiSuggestions[def.key]) merged[def.key] = aiSuggestions[def.key]; });
                       setEditingFields(merged);
                       setAiSuggestions(null);
                     }}
+                    disabled={isReadOnlyEntry}
                   >
                     すべて使う
                   </button>
@@ -899,18 +948,21 @@ export function RightPanel() {
                   </div>
                 )}
                 <div className="entry-form-action-buttons">
-                  <button type="button" className="button-secondary" onClick={handleAiAssist} disabled={isAiLoading}>
-                    {isAiLoading ? "AIが考え中…" : "AIアシスト"}
+                  <button type="button" className="button-secondary" onClick={handleAiAssist} disabled={isAiLoading || isReadOnlyEntry} aria-label="AIアシスト">
+                    <Bot size={16} />
+                    <span className="icon-tooltip">AIアシスト</span>
                   </button>
                   <button
                     type="button"
                     className={canSubmitEntry ? "button-primary" : "button-secondary"}
                     onClick={handleConfirm}
                     disabled={!canSubmitEntry}
+                    aria-label={requiresImageReview ? "画像のOKで反映" : isEditMode ? "更新" : "追加"}
                   >
-                    {requiresImageReview
-                      ? "画像のOKで反映"
-                      : isEditMode ? "更新" : "追加"}
+                    <SquarePlay size={16} />
+                    <span className="icon-tooltip">
+                      {requiresImageReview ? "画像のOKで反映" : isEditMode ? "更新" : "追加"}
+                    </span>
                   </button>
                 </div>
               </div>
@@ -923,14 +975,23 @@ export function RightPanel() {
                   <div className="image-preview-area">
                     <img src={imagePreview} alt="選択した画像" className="image-preview" />
                     <div className="image-preview-actions">
-                      <button type="button" className="button-secondary" onClick={() => { setImagePreview(null); fileInputRef.current?.click(); }}>
+                      <button
+                        type="button"
+                        className="button-secondary"
+                        onClick={() => {
+                          if (isReadOnlyEntry) return;
+                          setImagePreview(null);
+                          fileInputRef.current?.click();
+                        }}
+                        disabled={isReadOnlyEntry}
+                      >
                         画像を変更
                       </button>
                       <button
                         type="button"
                         className={isImageAnalyzing ? "button-secondary" : "button-primary"}
                         onClick={handleImageAnalyze}
-                        disabled={isImageAnalyzing}
+                        disabled={isImageAnalyzing || isReadOnlyEntry}
                       >
                         {isImageAnalyzing ? "解析中…" : "AIで解析して入力"}
                       </button>
@@ -938,7 +999,15 @@ export function RightPanel() {
                     {imageError && <p className="ai-assist-error">{imageError}</p>}
                   </div>
                 ) : (
-                  <button type="button" className="image-select-placeholder" onClick={() => fileInputRef.current?.click()}>
+                  <button
+                    type="button"
+                    className="image-select-placeholder"
+                    onClick={() => {
+                      if (isReadOnlyEntry) return;
+                      fileInputRef.current?.click();
+                    }}
+                    disabled={isReadOnlyEntry}
+                  >
                     <ImageIcon />
                     <span>クリックして画像を選択</span>
                   </button>
@@ -954,7 +1023,12 @@ export function RightPanel() {
                     type="url"
                     className="field-input"
                     value={videoUrl}
-                    onChange={(e) => { setVideoUrl(e.target.value); setVideoError(null); }}
+                    onChange={(e) => {
+                      if (isReadOnlyEntry) return;
+                      setVideoUrl(e.target.value);
+                      setVideoError(null);
+                    }}
+                    disabled={isReadOnlyEntry}
                     placeholder="YouTube や Vimeo の URL を貼り付け"
                   />
                   {videoError && <p className="ai-assist-error">{videoError}</p>}
@@ -962,7 +1036,7 @@ export function RightPanel() {
                     type="button"
                     className={videoUrl.trim() && !isVideoAnalyzing ? "button-primary" : "button-secondary"}
                     onClick={handleVideoAnalyze}
-                    disabled={!videoUrl.trim() || isVideoAnalyzing}
+                    disabled={!videoUrl.trim() || isVideoAnalyzing || isReadOnlyEntry}
                   >
                     {isVideoAnalyzing ? "解析中…" : "AIで解析して入力"}
                   </button>

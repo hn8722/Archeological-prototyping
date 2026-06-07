@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { LogOut } from "lucide-react";
 import { getUser, logout } from "@/lib/auth/actions";
 
 function HomeIcon() {
@@ -47,8 +48,9 @@ export async function AppHeader() {
           </div>
         )}
         <form action={logout}>
-          <button type="submit" className="app-logout-btn">
-            Log out
+          <button type="submit" className="app-logout-btn" aria-label="ログアウト">
+            <LogOut size={16} />
+            <span className="icon-tooltip">ログアウト</span>
           </button>
         </form>
       </div>

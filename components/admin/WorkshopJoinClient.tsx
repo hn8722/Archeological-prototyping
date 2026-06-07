@@ -39,7 +39,7 @@ export function WorkshopJoinClient() {
       <section className="workshop-join-card">
         <p className="admin-eyebrow">Workshop Join</p>
         <h1>ワークショップに参加</h1>
-        <p>参加コードと表示名を入力してください。ログインは不要です。</p>
+        <p>参加コードと名前を入力してください。ログインは不要です。</p>
         <input
           value={code}
           onChange={(event) => setCode(event.target.value.toUpperCase())}
@@ -55,7 +55,7 @@ export function WorkshopJoinClient() {
           onKeyDown={(event) => {
             if (event.key === "Enter" && !isJoining) void join();
           }}
-          placeholder="表示名"
+          placeholder="名前"
         />
         <button
           type="button"

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { BookOpenText } from "lucide-react";
 import { LeftPanel } from "./LeftPanel";
 import { CenterGraph } from "./CenterGraph";
 import { RightPanel } from "./RightPanel";
@@ -21,6 +22,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const selectedTarget = useSessionStore((state) => state.selectedTarget);
 
   const [isLoading, setIsLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [isGroupSession, setIsGroupSession] = useState(false);
   const [displayNameInput, setDisplayNameInput] = useState("");
   const [collaborationName, setCollaborationName] = useState("");
@@ -93,7 +95,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
         if (!isActive) return;
         initializeSession(mockSession(sessionId));
         hasHydratedRef.current = true;
-        setSaveState("error");
+        setLoadFailed(true);
       } finally {
         if (isActive) setIsLoading(false);
       }
@@ -116,11 +118,12 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
   }, [isLoading, lastMutation, persistMutation, session]);
 
   const saveStatusLabel =
-    saveState === "saving" ? "Saving..."
-    : saveState === "saved" ? "Saved"
-    : saveState === "conflict" ? "Synced newer changes"
-    : saveState === "error" ? "Save failed"
-    : "Idle";
+    loadFailed ? "読み込み失敗（オフラインモード）"
+    : saveState === "saving" ? "保存中..."
+    : saveState === "saved" ? "保存済み"
+    : saveState === "conflict" ? "最新に同期しました"
+    : saveState === "error" ? "保存失敗 — サーバーに接続できません"
+    : "";
 
   const handleDisplayNameSubmit = () => {
     const nextName = displayNameInput.trim() || "参加者";
@@ -145,9 +148,14 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
               {onlineCount} online
             </span>
           )}
-          <span className={`save-status save-status-${saveState}`}>{saveStatusLabel}</span>
+          {saveStatusLabel && (
+            <span className={`save-status ${loadFailed ? "save-status-error" : `save-status-${saveState}`}`}>
+              {saveStatusLabel}
+            </span>
+          )}
           <Link href={`/session/${sessionId}/story`} className="button-primary">
-            Generate Story
+            <BookOpenText size={16} />
+            <span className="icon-tooltip">小説を生成</span>
           </Link>
         </div>
       </div>
@@ -157,8 +165,8 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
           <CenterGraph collaborationPeers={peers} />
         </div>
         <div className="workspace-bottom">
-          <LeftPanel />
-          <RightPanel />
+          <LeftPanel collaborationPeers={peers} />
+          <RightPanel collaborationPeers={peers} />
         </div>
       </div>
 

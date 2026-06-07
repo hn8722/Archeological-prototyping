@@ -1,6 +1,7 @@
 "use client";
 
 import { CSSProperties, useEffect, useMemo, useState } from "react";
+import { ChevronLeft, ChevronRight, ArrowBigLeftDash, ArrowBigRightDash } from "lucide-react";
 import { useSessionStore } from "@/store/useSessionStore";
 import {
   AP_CROSS_GENERATION_EDGES,
@@ -409,9 +410,20 @@ export function CenterGraph({ collaborationPeers = [] }: { collaborationPeers?: 
     return <section className="panel graph-panel">Loading...</section>;
   }
 
-  const moveToGeneration = (generationIndex: number) => {
-    ensureGeneration(generationIndex);
+  const navigateToGeneration = (generationIndex: number) => {
     setActiveMapGeneration(generationIndex);
+  };
+
+  const addFutureGeneration = () => {
+    const maxIndex = Math.max(...graphModel.allGenerationIndexes);
+    ensureGeneration(maxIndex + 1);
+    setActiveMapGeneration(maxIndex + 1);
+  };
+
+  const addPastGeneration = () => {
+    const minIndex = Math.min(...graphModel.allGenerationIndexes);
+    ensureGeneration(minIndex - 1);
+    setActiveMapGeneration(minIndex - 1);
   };
 
   const getNodePeers = (generationIndex: number, nodeId: string) =>
@@ -438,19 +450,41 @@ export function CenterGraph({ collaborationPeers = [] }: { collaborationPeers?: 
           <button
             type="button"
             className="ap-transition-plus ap-transition-plus-left"
-            onClick={() => moveToGeneration(graphModel.mapGeneration - 1)}
-            aria-label="過去側のAPを見る"
+            onClick={() => navigateToGeneration(graphModel.mapGeneration - 1)}
+            disabled={!graphModel.allGenerationIndexes.includes(graphModel.mapGeneration - 1)}
+            aria-label="前の世代を見る"
           >
-            +
+            <ChevronLeft size={24} />
           </button>
           <button
             type="button"
             className="ap-transition-plus ap-transition-plus-right"
-            onClick={() => moveToGeneration(graphModel.mapGeneration + 1)}
-            aria-label="未来側のAPを見る"
+            onClick={() => navigateToGeneration(graphModel.mapGeneration + 1)}
+            disabled={!graphModel.allGenerationIndexes.includes(graphModel.mapGeneration + 1)}
+            aria-label="次の世代を見る"
           >
-            +
+            <ChevronRight size={24} />
           </button>
+          <div className="ap-add-generation-btns">
+            <button
+              type="button"
+              className="ap-add-generation-btn"
+              onClick={addPastGeneration}
+              aria-label="過去の世代を追加"
+            >
+              <ArrowBigLeftDash size={13} />
+              過去
+            </button>
+            <button
+              type="button"
+              className="ap-add-generation-btn"
+              onClick={addFutureGeneration}
+              aria-label="未来の世代を追加"
+            >
+              未来
+              <ArrowBigRightDash size={13} />
+            </button>
+          </div>
           <svg
             className="ap-map-svg"
             viewBox={`0 0 ${graphModel.width} ${graphModel.height}`}
