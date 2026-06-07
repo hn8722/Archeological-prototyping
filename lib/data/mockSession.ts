@@ -6,7 +6,7 @@ export function mockSession(id: string): SessionModel {
     id,
     revision: 0,
     name: "デモセッション",
-    activeGeneration: 1,
-    generations: [1, 2, 3].map(createGeneration),
+    activeGeneration: 0,
+    generations: [0, 1, 2].map(createGeneration),
   };
 }
