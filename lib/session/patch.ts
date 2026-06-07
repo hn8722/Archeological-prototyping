@@ -61,12 +61,19 @@ function createEmptyEdgeEntry(templateId: string): EdgeEntry | null {
   });
 }
 
-function isSameFieldEntry(first: FieldEntry, second: FieldEntry) {
-  const firstKeys = Object.keys(first);
-  const secondKeys = Object.keys(second);
-  if (firstKeys.length !== secondKeys.length) return false;
+function getFieldEntrySignature(entry: FieldEntry) {
+  return Object.entries(entry)
+    .map(([key, value]) => [key, value.trim()] as const)
+    .filter(([, value]) => value.length > 0)
+    .sort(([firstKey], [secondKey]) => firstKey.localeCompare(secondKey))
+    .map(([key, value]) => `${key}:${value}`)
+    .join("|");
+}
 
-  return firstKeys.every((key) => first[key] === second[key]);
+function hasSameFieldEntry(entries: FieldEntry[], fieldEntry: FieldEntry) {
+  const signature = getFieldEntrySignature(fieldEntry);
+  if (!signature) return false;
+  return entries.some((entry) => getFieldEntrySignature(entry) === signature);
 }
 
 function normalizeGeneration(generation: GenerationModel): GenerationModel {
@@ -93,7 +100,7 @@ function normalizeGeneration(generation: GenerationModel): GenerationModel {
 }
 
 function appendNodeFieldEntry(node: NodeEntry, fieldEntry: FieldEntry): NodeEntry {
-  const fieldEntries = node.fieldEntries.some((entry) => isSameFieldEntry(entry, fieldEntry))
+  const fieldEntries = hasSameFieldEntry(node.fieldEntries, fieldEntry)
     ? node.fieldEntries
     : [...node.fieldEntries, fieldEntry];
   const text = combineFieldEntries(node.label, fieldEntries);
@@ -108,7 +115,7 @@ function appendNodeFieldEntry(node: NodeEntry, fieldEntry: FieldEntry): NodeEntr
 }
 
 function appendEdgeFieldEntry(edge: EdgeEntry, fieldEntry: FieldEntry): EdgeEntry {
-  const fieldEntries = edge.fieldEntries.some((entry) => isSameFieldEntry(entry, fieldEntry))
+  const fieldEntries = hasSameFieldEntry(edge.fieldEntries, fieldEntry)
     ? edge.fieldEntries
     : [...edge.fieldEntries, fieldEntry];
   const text = combineFieldEntries(edge.label, fieldEntries);
