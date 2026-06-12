@@ -415,24 +415,48 @@ export function CenterGraph({ collaborationPeers = [] }: { collaborationPeers?: 
   };
 
   const addFutureGeneration = () => {
+    const confirmed = window.confirm("未来の世代を1つ追加しますか？");
+    if (!confirmed) return;
+
     const maxIndex = Math.max(...graphModel.allGenerationIndexes);
     ensureGeneration(maxIndex + 1);
     setActiveMapGeneration(maxIndex + 1);
   };
 
   const addPastGeneration = () => {
+    const confirmed = window.confirm("過去の世代を1つ追加しますか？");
+    if (!confirmed) return;
+
     const minIndex = Math.min(...graphModel.allGenerationIndexes);
     ensureGeneration(minIndex - 1);
     setActiveMapGeneration(minIndex - 1);
   };
 
-  const getNodePeers = (generationIndex: number, nodeId: string) =>
+  const getTargetPeers = (
+    kind: "node" | "edge",
+    generationIndex: number,
+    targetId: string
+  ) =>
     collaborationPeers.filter(
       (peer) =>
-        peer.selectedTarget?.kind === "node" &&
+        peer.selectedTarget?.kind === kind &&
         peer.selectedTarget.generation === generationIndex &&
-        peer.selectedTarget.id === nodeId
+        peer.selectedTarget.id === targetId
     );
+
+  const getPeerPresentation = (peers: OnlineMember[]) => {
+    const names = peers.map((peer) => peer.displayName).join(", ");
+    const label =
+      peers.length <= 1
+        ? peers[0]?.displayName
+        : `${peers[0].displayName} +${peers.length - 1}`;
+
+    return {
+      color: peers[0]?.color,
+      label,
+      names,
+    };
+  };
 
   return (
     <section className="panel graph-panel">
@@ -567,75 +591,114 @@ export function CenterGraph({ collaborationPeers = [] }: { collaborationPeers?: 
             </div>
           ))}
 
-          {graphModel.bridges.filter((bridge) => bridge.showLabel).map((bridge) => (
-            <button
-              key={`${bridge.id}-label`}
-              type="button"
-              className={`ap-bridge-label ${bridge.isSelected ? "ap-edge-label-selected" : ""} ${bridge.status === "filled" ? "ap-edge-label-filled" : ""}`}
-              style={{
-                left: `${bridge.labelX - EDGE_LABEL_WIDTH / 2}px`,
-                top: `${bridge.labelY - EDGE_LABEL_HEIGHT / 2}px`,
-              }}
-              onClick={() =>
-                selectTarget({
-                  generation: bridge.generationIndex,
-                  kind: "edge",
-                  id: bridge.edgeId,
-                })
-              }
-            >
-              {bridge.label}
-              <span className="ap-hover-tooltip" aria-hidden="true">
-                {" "}
-              </span>
-            </button>
-          ))}
+          {graphModel.bridges.filter((bridge) => bridge.showLabel).map((bridge) => {
+            const edgePeers = getTargetPeers("edge", bridge.generationIndex, bridge.edgeId);
+            const peer = getPeerPresentation(edgePeers);
+            const bridgeStyle = {
+              left: `${bridge.labelX - EDGE_LABEL_WIDTH / 2}px`,
+              top: `${bridge.labelY - EDGE_LABEL_HEIGHT / 2}px`,
+              borderColor: peer.color ?? undefined,
+              boxShadow: peer.color
+                ? `0 0 0 2px color-mix(in srgb, ${peer.color} 24%, transparent), 0 4px 10px rgba(15, 23, 42, 0.08)`
+                : undefined,
+              "--peer-color": peer.color,
+            } as CSSProperties;
 
-          {graphModel.edges.map((edge) => (
-            <button
-              key={`${edge.generationIndex}-${edge.edgeId}-label`}
-              type="button"
-              className={`ap-edge-label ${edge.isSelected ? "ap-edge-label-selected" : ""} ${edge.status === "filled" ? "ap-edge-label-filled" : ""}`}
-              style={{
-                left: `${edge.labelX - EDGE_LABEL_WIDTH / 2}px`,
-                top: `${edge.labelY - EDGE_LABEL_HEIGHT / 2}px`,
-              }}
-              onClick={() =>
-                selectTarget({
-                  generation: edge.generationIndex,
-                  kind: "edge",
-                  id: edge.edgeId,
-                })
-              }
-            >
-              <span>{edge.label}</span>
-              <span className="ap-hover-tooltip" aria-hidden="true">
-                {" "}
-              </span>
-            </button>
-          ))}
+            return (
+              <button
+                key={`${bridge.id}-label`}
+                type="button"
+                className={`ap-bridge-label ${bridge.isSelected ? "ap-edge-label-selected" : ""} ${bridge.status === "filled" ? "ap-edge-label-filled" : ""} ${edgePeers.length > 0 ? "ap-edge-label-peer-active" : ""}`}
+                style={bridgeStyle}
+                onClick={() =>
+                  selectTarget({
+                    generation: bridge.generationIndex,
+                    kind: "edge",
+                    id: bridge.edgeId,
+                  })
+                }
+              >
+                <span>{bridge.label}</span>
+                {edgePeers.length > 0 && (
+                  <span className="ap-peer-badge ap-edge-peer-badge" aria-label={`${peer.names} が表示中`}>
+                    {peer.label}
+                  </span>
+                )}
+                {edgePeers.length > 0 ? (
+                  <span className="ap-peer-tooltip" aria-hidden="true">
+                    {peer.names}
+                  </span>
+                ) : (
+                  <span className="ap-hover-tooltip" aria-hidden="true">
+                    {" "}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+
+          {graphModel.edges.map((edge) => {
+            const edgePeers = getTargetPeers("edge", edge.generationIndex, edge.edgeId);
+            const peer = getPeerPresentation(edgePeers);
+            const edgeStyle = {
+              left: `${edge.labelX - EDGE_LABEL_WIDTH / 2}px`,
+              top: `${edge.labelY - EDGE_LABEL_HEIGHT / 2}px`,
+              borderColor: peer.color ?? undefined,
+              boxShadow: peer.color
+                ? `0 0 0 2px color-mix(in srgb, ${peer.color} 24%, transparent), 0 4px 10px rgba(15, 23, 42, 0.08)`
+                : undefined,
+              "--peer-color": peer.color,
+            } as CSSProperties;
+
+            return (
+              <button
+                key={`${edge.generationIndex}-${edge.edgeId}-label`}
+                type="button"
+                className={`ap-edge-label ${edge.isSelected ? "ap-edge-label-selected" : ""} ${edge.status === "filled" ? "ap-edge-label-filled" : ""} ${edgePeers.length > 0 ? "ap-edge-label-peer-active" : ""}`}
+                style={edgeStyle}
+                onClick={() =>
+                  selectTarget({
+                    generation: edge.generationIndex,
+                    kind: "edge",
+                    id: edge.edgeId,
+                  })
+                }
+              >
+                <span>{edge.label}</span>
+                {edgePeers.length > 0 && (
+                  <span className="ap-peer-badge ap-edge-peer-badge" aria-label={`${peer.names} が表示中`}>
+                    {peer.label}
+                  </span>
+                )}
+                {edgePeers.length > 0 ? (
+                  <span className="ap-peer-tooltip" aria-hidden="true">
+                    {peer.names}
+                  </span>
+                ) : (
+                  <span className="ap-hover-tooltip" aria-hidden="true">
+                    {" "}
+                  </span>
+                )}
+              </button>
+            );
+          })}
 
           {graphModel.nodes.map((node) => {
             if (!node.position) return null;
 
             const appearance = getNodeAppearance(node.status, node.isSelected);
-            const nodePeers = getNodePeers(node.generationIndex, node.nodeId);
-            const peerColor = nodePeers[0]?.color;
-            const peerNames = nodePeers.map((peer) => peer.displayName).join("、");
-            const peerLabel =
-              nodePeers.length <= 1
-                ? nodePeers[0]?.displayName
-                : `${nodePeers[0].displayName} +${nodePeers.length - 1}`;
+            const nodePeers = getTargetPeers("node", node.generationIndex, node.nodeId);
+            const peer = getPeerPresentation(nodePeers);
             const nodeStyle = {
               left: `${node.position.left}px`,
               top: `${node.position.top}px`,
               background: appearance.background,
-              borderColor: peerColor ?? appearance.borderColor,
+              borderColor: peer.color ?? appearance.borderColor,
               opacity: appearance.opacity,
-              boxShadow: peerColor
-                ? `0 0 0 3px color-mix(in srgb, ${peerColor} 22%, transparent), 0 0 18px color-mix(in srgb, ${peerColor} 24%, transparent)`
+              boxShadow: peer.color
+                ? `0 0 0 3px color-mix(in srgb, ${peer.color} 22%, transparent), 0 0 18px color-mix(in srgb, ${peer.color} 24%, transparent)`
                 : appearance.boxShadow,
-              "--peer-color": peerColor,
+              "--peer-color": peer.color,
             } as CSSProperties;
 
             return (
@@ -653,15 +716,15 @@ export function CenterGraph({ collaborationPeers = [] }: { collaborationPeers?: 
                 }
               >
                 {nodePeers.length > 0 && (
-                  <span className="ap-node-peer-badge" aria-label={`${peerNames} が表示中`}>
-                    {peerLabel}
+                  <span className="ap-peer-badge ap-node-peer-badge" aria-label={`${peer.names} が表示中`}>
+                    {peer.label}
                   </span>
                 )}
                 <strong>{node.label}</strong>
                 {node.decade && <span className="ap-node-decade">{node.decade}</span>}
                 {nodePeers.length > 0 ? (
                   <span className="ap-peer-tooltip" aria-hidden="true">
-                    {peerNames}
+                    {peer.names}
                   </span>
                 ) : (
                   <span className="ap-hover-tooltip" aria-hidden="true">

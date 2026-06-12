@@ -78,7 +78,7 @@ APモデルは 6つのノードと 12本のエッジ（通常8本＋世代間4�
 
 ```
 ユーザー操作
-  → Zustandストア（楽観的更新）
+  → Zustandストア
   → 700ms debounce
   → PATCH /api/sessions/[id]
   → Supabase Realtime broadcast

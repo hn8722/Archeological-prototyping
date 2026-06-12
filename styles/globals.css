@@ -1939,14 +1939,13 @@ a {
   line-height: 1.35;
 }
 
-.ap-node-card-peer-active {
+.ap-node-card-peer-active,
+.ap-edge-label-peer-active {
   border-width: 2px;
 }
 
-.ap-node-peer-badge {
+.ap-peer-badge {
   position: absolute;
-  right: -8px;
-  top: -10px;
   max-width: 82px;
   padding: 3px 7px;
   border: 1px solid color-mix(in srgb, var(--peer-color, #7dacef) 56%, #fff 44%);
@@ -1961,6 +1960,18 @@ a {
   white-space: nowrap;
   box-shadow: 0 4px 12px rgba(15, 23, 42, 0.12);
   pointer-events: none;
+}
+
+.ap-node-peer-badge {
+  right: -8px;
+  top: -10px;
+}
+
+.ap-edge-peer-badge {
+  right: -7px;
+  top: -11px;
+  max-width: 74px;
+  font-size: 9px;
 }
 
 .ap-peer-tooltip {
@@ -2028,7 +2039,11 @@ a {
 }
 
 .ap-node-card:hover .ap-peer-tooltip,
-.ap-node-card:focus-visible .ap-peer-tooltip {
+.ap-node-card:focus-visible .ap-peer-tooltip,
+.ap-edge-label:hover .ap-peer-tooltip,
+.ap-edge-label:focus-visible .ap-peer-tooltip,
+.ap-bridge-label:hover .ap-peer-tooltip,
+.ap-bridge-label:focus-visible .ap-peer-tooltip {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
 }
