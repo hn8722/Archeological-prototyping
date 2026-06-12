@@ -75,6 +75,10 @@ export function LeftPanel({ sessionId, collaborationPeers = [] }: { sessionId: s
     return combineFields(label, entry);
   }
 
+  function getEntryAuthor(entry: FieldEntry) {
+    return entry.__authorName?.trim() || "";
+  }
+
   function getEntryEditor(
     kind: "node" | "edge",
     entryId: string,
@@ -164,6 +168,7 @@ export function LeftPanel({ sessionId, collaborationPeers = [] }: { sessionId: s
             const isEntrySelected = selectedTarget?.entryIndex === index;
             const editor = getEntryEditor(kind, entry.templateId, index);
             const preview = entryPreview(entry.label, fe);
+            const author = getEntryAuthor(fe);
             const isPendingDelete =
               confirmDelete?.kind === kind &&
               confirmDelete.templateId === entry.templateId &&
@@ -192,6 +197,11 @@ export function LeftPanel({ sessionId, collaborationPeers = [] }: { sessionId: s
                     }}
                   >
                     <span className="accordion-entry-index">#{index + 1}</span>
+                    {author && (
+                      <span className="accordion-entry-author" title={`記述者: ${author}`}>
+                        {author}
+                      </span>
+                    )}
                     <span className="accordion-entry-preview">{preview}</span>
                     {editor && (
                       <span className="accordion-entry-lock">{editor.displayName} が編集中</span>

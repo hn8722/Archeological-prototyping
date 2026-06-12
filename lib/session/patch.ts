@@ -64,7 +64,7 @@ function createEmptyEdgeEntry(templateId: string): EdgeEntry | null {
 function getFieldEntrySignature(entry: FieldEntry) {
   return Object.entries(entry)
     .map(([key, value]) => [key, value.trim()] as const)
-    .filter(([, value]) => value.length > 0)
+    .filter(([key, value]) => !key.startsWith("__") && value.length > 0)
     .sort(([firstKey], [secondKey]) => firstKey.localeCompare(secondKey))
     .map(([key, value]) => `${key}:${value}`)
     .join("|");

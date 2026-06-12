@@ -4,6 +4,7 @@ import { Prisma } from "@/generated/prisma/client";
 import { mockSession } from "@/lib/data/mockSession";
 import {
   EdgeEntry,
+  FieldEntry,
   ImportedEntryRecord,
   NodeEntry,
   SessionModel,
@@ -864,10 +865,20 @@ export async function applySessionPatchRecord(sessionId: string, patch: SessionP
     const normalizedCurrent = normalizeSession(currentSession);
 
     if (patch.targetKind === "nodeFieldEntryAppend" || patch.targetKind === "edgeFieldEntryAppend") {
+      const entryWithAuthor =
+        actor && typeof patch.entry === "object" && patch.entry !== null
+          ? {
+              ...(patch.entry as FieldEntry),
+              __authorId: (patch.entry as FieldEntry).__authorId || actor.id,
+              __authorName: (patch.entry as FieldEntry).__authorName || actor.label || "参加者",
+              __createdAt: (patch.entry as FieldEntry).__createdAt || new Date().toISOString(),
+            }
+          : patch.entry;
       const nextPatch: SessionPatch = {
         ...patch,
         baseRevision: normalizedCurrent.revision,
         nextRevision: normalizedCurrent.revision + 1,
+        entry: entryWithAuthor,
       };
       const nextSession = applySessionPatch(normalizedCurrent, nextPatch);
       if (!nextSession) {

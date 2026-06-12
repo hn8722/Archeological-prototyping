@@ -152,7 +152,15 @@ function getFilledRelatedItems(items: RelatedItem[]) {
   return items.filter((item) => Boolean(getNormalizedText(item.text)));
 }
 
-export function RightPanel({ sessionId, collaborationPeers = [] }: { sessionId: string; collaborationPeers?: OnlineMember[] }) {
+export function RightPanel({
+  sessionId,
+  collaborationPeers = [],
+  authorName = "",
+}: {
+  sessionId: string;
+  collaborationPeers?: OnlineMember[];
+  authorName?: string;
+}) {
   const session = useSessionStore((state) => state.session);
   const selectedTarget = useSessionStore((state) => state.selectedTarget);
   const selectTarget = useSessionStore((state) => state.selectTarget);
@@ -494,6 +502,11 @@ export function RightPanel({ sessionId, collaborationPeers = [] }: { sessionId: 
   const canUseImageConfirmation = Boolean(
     selectedEntry && IMAGE_CONFIRMATION_LABELS.has(selectedEntry.label)
   );
+  const confirmedIntentImage =
+    [...(selectedEntry?.fieldEntries ?? [])]
+      .reverse()
+      .map((entry) => entry.__intentImageUrl?.trim())
+      .find(Boolean) ?? null;
   const requiresImageReview = Boolean(generatedImage);
   const canSubmitEntry = canConfirm && !requiresImageReview && !isReadOnlyEntry;
   const shouldHighlightImageCheck =
@@ -520,7 +533,7 @@ export function RightPanel({ sessionId, collaborationPeers = [] }: { sessionId: 
     heldLockRef.current = null;
   };
 
-  const commitEntry = () => {
+  const commitEntry = (intentImageUrl?: string | null) => {
     if (!selectedTarget || isReadOnlyEntry) return;
 
     if (!hasFieldSchema) {
@@ -530,18 +543,32 @@ export function RightPanel({ sessionId, collaborationPeers = [] }: { sessionId: 
 
     const currentEntries: FieldEntry[] = selectedEntry?.fieldEntries ?? [];
     const entryIndex = selectedTarget.entryIndex;
+    const authorLabel = authorName.trim();
+    const entryWithAuthor: FieldEntry = {
+      ...mergedEditingFields,
+      ...(authorLabel ? { __authorName: authorLabel } : {}),
+      ...(intentImageUrl ? { __intentImageUrl: intentImageUrl } : {}),
+    };
 
     if (entryIndex === undefined) {
       if (selectedTarget.kind === "node") {
-        appendNodeFieldEntry(selectedTarget.generation, selectedTarget.id, mergedEditingFields);
+        appendNodeFieldEntry(selectedTarget.generation, selectedTarget.id, entryWithAuthor);
       } else {
-        appendEdgeFieldEntry(selectedTarget.generation, selectedTarget.id, mergedEditingFields);
+        appendEdgeFieldEntry(selectedTarget.generation, selectedTarget.id, entryWithAuthor);
       }
     } else {
+      const previousEntry = currentEntries[entryIndex] ?? {};
+      const updatedEntry: FieldEntry = {
+        ...mergedEditingFields,
+        __authorName: previousEntry.__authorName ?? entryWithAuthor.__authorName ?? "",
+        __authorId: previousEntry.__authorId ?? entryWithAuthor.__authorId ?? "",
+        __createdAt: previousEntry.__createdAt ?? entryWithAuthor.__createdAt ?? "",
+        __intentImageUrl: intentImageUrl ?? previousEntry.__intentImageUrl ?? "",
+      };
       if (selectedTarget.kind === "node") {
-        updateNodeFieldEntry(selectedTarget.generation, selectedTarget.id, entryIndex, mergedEditingFields);
+        updateNodeFieldEntry(selectedTarget.generation, selectedTarget.id, entryIndex, updatedEntry);
       } else {
-        updateEdgeFieldEntry(selectedTarget.generation, selectedTarget.id, entryIndex, mergedEditingFields);
+        updateEdgeFieldEntry(selectedTarget.generation, selectedTarget.id, entryIndex, updatedEntry);
       }
     }
 
@@ -560,9 +587,9 @@ export function RightPanel({ sessionId, collaborationPeers = [] }: { sessionId: 
   };
 
   const handleApproveGeneratedImage = () => {
-    if (!canConfirm || isReadOnlyEntry) return;
+    if (!canConfirm || isReadOnlyEntry || !generatedImage) return;
     setImageReviewStatus("ok");
-    commitEntry();
+    commitEntry(generatedImage);
     clearGeneratedImageReview();
   };
 
@@ -676,6 +703,12 @@ export function RightPanel({ sessionId, collaborationPeers = [] }: { sessionId: 
               <div className="selected-model-hint">
                 <span className="selected-model-hint-mark" aria-hidden="true">?</span>
                 <p className="selected-model-hint-text">{modelHint}</p>
+              </div>
+            )}
+            {confirmedIntentImage && (
+              <div className="selected-intent-image">
+                <p className="selected-intent-image-title">確認済み画像</p>
+                <img src={confirmedIntentImage} alt="確認済みの入力意図画像" className="selected-intent-image-preview" />
               </div>
             )}
             {shouldShowImageCheck && (

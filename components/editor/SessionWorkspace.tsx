@@ -234,7 +234,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
         </div>
         <div className="workspace-bottom">
           <LeftPanel sessionId={sessionId} collaborationPeers={peers} />
-          <RightPanel sessionId={sessionId} collaborationPeers={peers} />
+          <RightPanel sessionId={sessionId} collaborationPeers={peers} authorName={collaborationName} />
         </div>
       </div>
 
