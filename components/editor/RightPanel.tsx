@@ -668,7 +668,7 @@ export function RightPanel({ sessionId, collaborationPeers = [] }: { sessionId: 
       {!selectedTarget && <p>左または中央から対象を選択してください。</p>}
 
       {selectedTarget && selectedEntry && (
-        <>
+        <div className="right-panel-content">
           <div className="selected-box">
             <h3 className="selected-model-name">{selectedEntry.label}</h3>
             <p className="selected-model-description">{modelDescription}</p>
@@ -1119,7 +1119,7 @@ export function RightPanel({ sessionId, collaborationPeers = [] }: { sessionId: 
               </div>
             </div>
           )}
-        </>
+        </div>
       )}
     </aside>
   );

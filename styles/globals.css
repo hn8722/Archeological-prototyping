@@ -318,6 +318,23 @@ a {
   line-height: 1.7;
 }
 
+.right-panel-content {
+  display: flex;
+  flex-direction: column;
+}
+
+.right-panel-content > .selected-box {
+  order: 1;
+}
+
+.right-panel-content > .entry-form-section {
+  order: 2;
+}
+
+.right-panel-content > .related-model-layout {
+  order: 3;
+}
+
 .selected-model-hint {
   margin-top: 14px;
   padding: 12px 14px;
