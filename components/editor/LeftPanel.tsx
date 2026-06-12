@@ -53,10 +53,6 @@ export function LeftPanel({ collaborationPeers = [] }: { collaborationPeers?: On
   );
   const currentGeneration =
     generations.find((g) => g.generationIndex === activeGeneration) ?? generations[0];
-  const currentGenerationPosition = Math.max(
-    0,
-    generations.findIndex((generation) => generation.generationIndex === currentGeneration.generationIndex)
-  );
   const maxVisibleGenerationStart = Math.max(generations.length - 3, 0);
   const visibleGenerationStart = Math.min(generationTabStart, maxVisibleGenerationStart);
   const visibleGenerations = generations.slice(visibleGenerationStart, visibleGenerationStart + 3);
@@ -97,101 +93,19 @@ export function LeftPanel({ collaborationPeers = [] }: { collaborationPeers?: On
     });
   }
 
-  function renderNodeEntries(node: NodeEntry) {
-    const isOpen = selectedNodeId === node.templateId;
+  function renderEntries(entry: NodeEntry | EdgeEntry, kind: "node" | "edge") {
+    const isOpen = kind === "node" ? selectedNodeId === entry.templateId : selectedEdgeId === entry.templateId;
     if (!isOpen) return null;
 
-    const defs = getFieldDefs(node.label);
-    const completedEntries = node.fieldEntries
-      .map((entry, index) => ({ entry, index }))
-      .filter(({ entry }) => defs.length === 0 || defs.every((def) => Boolean(entry[def.key]?.trim())));
+    const defs = getFieldDefs(entry.label);
 
-    const handleDelete = (entryIndex: number) => {
-      const newEntries = node.fieldEntries.filter((_, index) => index !== entryIndex);
-      setNodeFieldEntries(currentGeneration.generationIndex, node.templateId, newEntries);
-      setConfirmDelete(null);
-      if (selectedTarget?.entryIndex === entryIndex) {
-        selectTarget({
-          generation: currentGeneration.generationIndex,
-          kind: "node",
-          id: node.templateId,
-        });
-      }
-    };
-
-    return (
-      <div className="accordion-body">
-        {completedEntries.length === 0 ? (
-          <p className="accordion-empty">まだ記述はありません。中央図から追加できます。</p>
-        ) : (
-          completedEntries.map(({ entry, index }) => {
-            const isEntrySelected = selectedTarget?.entryIndex === index;
-            const editor = getEntryEditor("node", node.templateId, index);
-            const preview = entryPreview(node.label, entry);
-            const isPendingDelete = confirmDelete?.kind === "node" && confirmDelete.templateId === node.templateId && confirmDelete.entryIndex === index;
-
-            return (
-              <div
-                key={index}
-                className={`accordion-entry ${isEntrySelected ? "accordion-entry-selected" : ""} ${editor ? "accordion-entry-locked" : ""}`}
-              >
-                <div className="accordion-entry-main">
-                  <button
-                    type="button"
-                    className="accordion-entry-btn"
-                    onClick={() =>
-                      selectTarget({
-                        generation: currentGeneration.generationIndex,
-                        kind: "node",
-                        id: node.templateId,
-                        entryIndex: index,
-                        mode: editor ? "viewing" : "editing",
-                      })
-                    }
-                  >
-                    <span className="accordion-entry-index">#{index + 1}</span>
-                    <span className="accordion-entry-preview">{preview}</span>
-                    {editor && (
-                      <span className="accordion-entry-lock">{editor.displayName} が編集中</span>
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    className="accordion-entry-delete"
-                    onClick={() => setConfirmDelete(isPendingDelete ? null : { kind: "node", templateId: node.templateId, entryIndex: index })}
-                    disabled={Boolean(editor)}
-                    title="削除"
-                  >
-                    ×
-                  </button>
-                </div>
-                {isPendingDelete && (
-                  <div className="accordion-delete-confirm">
-                    <span className="accordion-delete-confirm-text">削除しますか？</span>
-                    <button type="button" className="accordion-delete-confirm-ok" onClick={() => handleDelete(index)}>削除</button>
-                    <button type="button" className="accordion-delete-confirm-cancel" onClick={() => setConfirmDelete(null)}>キャンセル</button>
-                  </div>
-                )}
-              </div>
-            );
-          })
-        )}
-      </div>
-    );
-  }
-
-  function renderEdgeEntries(edge: EdgeEntry) {
-    const isOpen = selectedEdgeId === edge.templateId;
-    if (!isOpen) return null;
-
-    const defs = getFieldDefs(edge.label);
-
-    if (defs.length === 0) {
+    // フリーテキスト形式のエッジ（フィールドスキーマなし）
+    if (kind === "edge" && defs.length === 0) {
       return (
         <div className="accordion-body">
-          {edge.text ? (
+          {entry.text ? (
             <div className="accordion-entry">
-              <span className="accordion-entry-preview">{edge.text}</span>
+              <span className="accordion-entry-preview">{entry.text}</span>
             </div>
           ) : (
             <p className="accordion-empty">まだ記述はありません。中央図から追加できます。</p>
@@ -200,20 +114,20 @@ export function LeftPanel({ collaborationPeers = [] }: { collaborationPeers?: On
       );
     }
 
-    const completedEntries = edge.fieldEntries
-      .map((entry, index) => ({ entry, index }))
-      .filter(({ entry }) => defs.every((def) => Boolean(entry[def.key]?.trim())));
+    const completedEntries = entry.fieldEntries
+      .map((fe, index) => ({ entry: fe, index }))
+      .filter(({ entry: fe }) => defs.length === 0 || defs.every((def) => Boolean(fe[def.key]?.trim())));
 
     const handleDelete = (entryIndex: number) => {
-      const newEntries = edge.fieldEntries.filter((_, index) => index !== entryIndex);
-      setEdgeFieldEntries(currentGeneration.generationIndex, edge.templateId, newEntries);
+      const newEntries = entry.fieldEntries.filter((_, i) => i !== entryIndex);
+      if (kind === "node") {
+        setNodeFieldEntries(currentGeneration.generationIndex, entry.templateId, newEntries);
+      } else {
+        setEdgeFieldEntries(currentGeneration.generationIndex, entry.templateId, newEntries);
+      }
       setConfirmDelete(null);
       if (selectedTarget?.entryIndex === entryIndex) {
-        selectTarget({
-          generation: currentGeneration.generationIndex,
-          kind: "edge",
-          id: edge.templateId,
-        });
+        selectTarget({ generation: currentGeneration.generationIndex, kind, id: entry.templateId });
       }
     };
 
@@ -222,11 +136,14 @@ export function LeftPanel({ collaborationPeers = [] }: { collaborationPeers?: On
         {completedEntries.length === 0 ? (
           <p className="accordion-empty">まだ記述はありません。中央図から追加できます。</p>
         ) : (
-          completedEntries.map(({ entry, index }) => {
+          completedEntries.map(({ entry: fe, index }) => {
             const isEntrySelected = selectedTarget?.entryIndex === index;
-            const editor = getEntryEditor("edge", edge.templateId, index);
-            const preview = entryPreview(edge.label, entry);
-            const isPendingDelete = confirmDelete?.kind === "edge" && confirmDelete.templateId === edge.templateId && confirmDelete.entryIndex === index;
+            const editor = getEntryEditor(kind, entry.templateId, index);
+            const preview = entryPreview(entry.label, fe);
+            const isPendingDelete =
+              confirmDelete?.kind === kind &&
+              confirmDelete.templateId === entry.templateId &&
+              confirmDelete.entryIndex === index;
 
             return (
               <div
@@ -240,8 +157,8 @@ export function LeftPanel({ collaborationPeers = [] }: { collaborationPeers?: On
                     onClick={() =>
                       selectTarget({
                         generation: currentGeneration.generationIndex,
-                        kind: "edge",
-                        id: edge.templateId,
+                        kind,
+                        id: entry.templateId,
                         entryIndex: index,
                         mode: editor ? "viewing" : "editing",
                       })
@@ -256,7 +173,11 @@ export function LeftPanel({ collaborationPeers = [] }: { collaborationPeers?: On
                   <button
                     type="button"
                     className="accordion-entry-delete"
-                    onClick={() => setConfirmDelete(isPendingDelete ? null : { kind: "edge", templateId: edge.templateId, entryIndex: index })}
+                    onClick={() =>
+                      setConfirmDelete(
+                        isPendingDelete ? null : { kind, templateId: entry.templateId, entryIndex: index }
+                      )
+                    }
                     disabled={Boolean(editor)}
                     title="削除"
                   >
@@ -323,7 +244,7 @@ export function LeftPanel({ collaborationPeers = [] }: { collaborationPeers?: On
       </div>
 
       <div className="generation-block">
-        <div className="sub-section-title">Objects</div>
+        <div className="sub-section-title">ノード（要素）</div>
         {Object.values(currentGeneration.nodes).map((node) => {
           const isOpen = selectedNodeId === node.templateId;
 
@@ -346,12 +267,12 @@ export function LeftPanel({ collaborationPeers = [] }: { collaborationPeers?: On
                 </span>
                 <StatusBadge status={node.status} />
               </button>
-              {renderNodeEntries(node)}
+              {renderEntries(node, "node")}
             </div>
           );
         })}
 
-        <div className="sub-section-title">Arrows</div>
+        <div className="sub-section-title">エッジ（矢印）</div>
         {Object.values(currentGeneration.edges).map((edge) => {
           const isOpen = selectedEdgeId === edge.templateId;
 
@@ -374,7 +295,7 @@ export function LeftPanel({ collaborationPeers = [] }: { collaborationPeers?: On
                 </span>
                 <StatusBadge status={edge.status} />
               </button>
-              {renderEdgeEntries(edge)}
+              {renderEntries(edge, "edge")}
             </div>
           );
         })}

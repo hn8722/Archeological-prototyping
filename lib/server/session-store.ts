@@ -92,22 +92,18 @@ export async function listPublicSessions(excludeOwnerId?: string) {
     updatedAt: string | Date;
   };
 
-  const records = excludeOwnerId
-    ? await prisma.$queryRaw<PublicSessionRow[]>(Prisma.sql`
-        SELECT "id", "name", "ownerId", "snapshot", "createdAt", "updatedAt"
-        FROM "Session"
-        WHERE "isGroup" = false
-          AND "isPublic" = true
-          AND ("ownerId" IS NULL OR "ownerId" <> ${excludeOwnerId})
-        ORDER BY "updatedAt" DESC
-      `)
-    : await prisma.$queryRaw<PublicSessionRow[]>(Prisma.sql`
-        SELECT "id", "name", "ownerId", "snapshot", "createdAt", "updatedAt"
-        FROM "Session"
-        WHERE "isGroup" = false
-          AND "isPublic" = true
-        ORDER BY "updatedAt" DESC
-      `);
+  const ownerFilter = excludeOwnerId
+    ? Prisma.sql`AND ("ownerId" IS NULL OR "ownerId" <> ${excludeOwnerId})`
+    : Prisma.sql``;
+
+  const records = await prisma.$queryRaw<PublicSessionRow[]>(Prisma.sql`
+    SELECT "id", "name", "ownerId", "snapshot", "createdAt", "updatedAt"
+    FROM "Session"
+    WHERE "isGroup" = false
+      AND "isPublic" = true
+      ${ownerFilter}
+    ORDER BY "updatedAt" DESC
+  `);
 
   const storyRows = records.length
     ? await prisma.storyDraft.findMany({
@@ -604,6 +600,20 @@ function uniqueIdentityValues(...values: Array<string | null | undefined>) {
   return [...new Set(values.map((value) => value?.trim()).filter(Boolean) as string[])];
 }
 
+async function resolveGroupAccess(
+  sessionId: string,
+  info: SessionAccessInfo,
+  userId?: string,
+  userEmail?: string | null,
+  participantToken?: string | null
+) {
+  const participant = await getWorkshopParticipantForSession(sessionId, participantToken);
+  const isMember = userId ? await isGroupSessionMember(sessionId, userId, userEmail) : false;
+  const isOwner = Boolean(userId && info.ownerId === userId);
+  const participantAllowed = Boolean(participant);
+  return { participant, isMember, isOwner, participantAllowed };
+}
+
 export async function canReadSession(
   sessionId: string,
   userId?: string,
@@ -614,14 +624,13 @@ export async function canReadSession(
   if (!info) return { exists: false as const, allowed: false as const, info: null };
 
   if (info.isGroup) {
-    const participant = await getWorkshopParticipantForSession(sessionId, participantToken);
-    const allowed = userId ? await isGroupSessionMember(sessionId, userId, userEmail) : false;
-    const isOwner = Boolean(userId && info.ownerId === userId);
-    const participantAllowed = Boolean(participant);
-    const readAllowed =
-      (allowed || participantAllowed) &&
+    const { participant, isMember, isOwner, participantAllowed } = await resolveGroupAccess(
+      sessionId, info, userId, userEmail, participantToken
+    );
+    const allowed =
+      (isMember || participantAllowed) &&
       (isOwner || info.workshopStatus !== "closed" || info.workshopAllowReadAfterClose);
-    return { exists: true as const, allowed: readAllowed, info, participant };
+    return { exists: true as const, allowed, info, participant };
   }
 
   const allowed = Boolean(userId && info.ownerId === userId);
@@ -638,12 +647,11 @@ export async function canWriteSession(
   if (!info) return { exists: false as const, allowed: false as const, info: null };
 
   if (info.isGroup) {
-    const participant = await getWorkshopParticipantForSession(sessionId, participantToken);
-    const allowed = userId ? await isGroupSessionMember(sessionId, userId, userEmail) : false;
-    const isOwner = Boolean(userId && info.ownerId === userId);
-    const participantAllowed = Boolean(participant);
-    const writeAllowed = (allowed || participantAllowed) && (isOwner || info.workshopStatus !== "closed");
-    return { exists: true as const, allowed: writeAllowed, info, participant };
+    const { participant, isMember, isOwner, participantAllowed } = await resolveGroupAccess(
+      sessionId, info, userId, userEmail, participantToken
+    );
+    const allowed = (isMember || participantAllowed) && (isOwner || info.workshopStatus !== "closed");
+    return { exists: true as const, allowed, info, participant };
   }
 
   const allowed = Boolean(userId && info.ownerId === userId);
@@ -791,25 +799,12 @@ function mergeFieldEntries(
   return [...existingFieldEntries, ...incomingFieldEntries];
 }
 
-function updateImportedNode(node: NodeEntry, sourceNode: NodeEntry, mode: ImportMode): NodeEntry {
-  const mergedFieldEntries = mergeFieldEntries(node.fieldEntries, sourceNode.fieldEntries, mode);
-  const mergedText = mergeText(node.text, sourceNode.text, mode);
+function updateImportedEntry<T extends NodeEntry | EdgeEntry>(target: T, source: T, mode: ImportMode): T {
+  const mergedFieldEntries = mergeFieldEntries(target.fieldEntries, source.fieldEntries, mode);
+  const mergedText = mergeText(target.text, source.text, mode);
 
   return {
-    ...node,
-    fieldEntries: mergedFieldEntries,
-    text: mergedText,
-    status: mergedText?.trim() ? "filled" : "empty",
-    isConfirmed: mergedFieldEntries.length > 0 || Boolean(mergedText?.trim()),
-  };
-}
-
-function updateImportedEdge(edge: EdgeEntry, sourceEdge: EdgeEntry, mode: ImportMode): EdgeEntry {
-  const mergedFieldEntries = mergeFieldEntries(edge.fieldEntries, sourceEdge.fieldEntries, mode);
-  const mergedText = mergeText(edge.text, sourceEdge.text, mode);
-
-  return {
-    ...edge,
+    ...target,
     fieldEntries: mergedFieldEntries,
     text: mergedText,
     status: mergedText?.trim() ? "filled" : "empty",
@@ -849,7 +844,7 @@ export async function importGallerySelectionsIntoSession(input: ImportIntoSessio
             ...nextGeneration,
             nodes: {
               ...nextGeneration.nodes,
-              [selection.entryId]: updateImportedNode(targetNode, sourceNode, input.mode),
+              [selection.entryId]: updateImportedEntry(targetNode, sourceNode, input.mode),
             },
           };
         } else {
@@ -863,7 +858,7 @@ export async function importGallerySelectionsIntoSession(input: ImportIntoSessio
             ...nextGeneration,
             edges: {
               ...nextGeneration.edges,
-              [selection.entryId]: updateImportedEdge(targetEdge, sourceEdge, input.mode),
+              [selection.entryId]: updateImportedEntry(targetEdge, sourceEdge, input.mode),
             },
           };
         }

@@ -76,6 +76,37 @@ function buildAppendFieldEntryPatch(
   };
 }
 
+function applyFieldEntriesUpdate(
+  state: { session: SessionModel | null; lastMutation: SessionPatch | null },
+  kind: "node" | "edge",
+  generationIndex: number,
+  entryId: string,
+  fieldEntries: FieldEntry[]
+) {
+  if (!state.session) return state;
+
+  const session = normalizeSession(state.session);
+  const generation = session.generations.find((item) => item.generationIndex === generationIndex);
+  const current = kind === "node" ? generation?.nodes[entryId] : generation?.edges[entryId];
+  if (!generation || !current) return state;
+
+  const combinedText = combineFieldEntries(current.label, fieldEntries);
+  const nextStatus: EntryStatus = hasAnyCompletedEntry(current.label, fieldEntries) ? "filled" : "empty";
+  const updated = {
+    ...current,
+    fieldEntries,
+    text: combinedText || null,
+    status: nextStatus,
+    isConfirmed: fieldEntries.length > 0,
+  } as NodeEntry | EdgeEntry;
+
+  const patch = buildPatch(session, kind, generationIndex, entryId, updated);
+  const nextSession = applySessionPatch(session, patch);
+  if (!nextSession) return state;
+
+  return { session: nextSession, lastMutation: patch };
+}
+
 type SessionStore = {
   session: SessionModel | null;
   lastMutation: SessionPatch | null;
@@ -227,70 +258,10 @@ export const useSessionStore = create<SessionStore>((set) => ({
     }),
 
   setNodeFieldEntries: (generationIndex, nodeId, fieldEntries) =>
-    set((state) => {
-      if (!state.session) return state;
-
-      const session = normalizeSession(state.session);
-      const generation = session.generations.find((item) => item.generationIndex === generationIndex);
-      const currentNode = generation?.nodes[nodeId];
-
-      if (!generation || !currentNode) return state;
-
-      const combinedText = combineFieldEntries(currentNode.label, fieldEntries);
-      const nextStatus: EntryStatus = hasAnyCompletedEntry(currentNode.label, fieldEntries)
-        ? "filled"
-        : "empty";
-
-      const updatedNode: NodeEntry = {
-        ...currentNode,
-        fieldEntries,
-        text: combinedText || null,
-        status: nextStatus,
-        isConfirmed: fieldEntries.length > 0,
-      };
-
-      const patch = buildPatch(session, "node", generationIndex, nodeId, updatedNode);
-      const nextSession = applySessionPatch(session, patch);
-      if (!nextSession) return state;
-
-      return {
-        session: nextSession,
-        lastMutation: patch,
-      };
-    }),
+    set((state) => applyFieldEntriesUpdate(state, "node", generationIndex, nodeId, fieldEntries)),
 
   setEdgeFieldEntries: (generationIndex, edgeId, fieldEntries) =>
-    set((state) => {
-      if (!state.session) return state;
-
-      const session = normalizeSession(state.session);
-      const generation = session.generations.find((item) => item.generationIndex === generationIndex);
-      const currentEdge = generation?.edges[edgeId];
-
-      if (!generation || !currentEdge) return state;
-
-      const combinedText = combineFieldEntries(currentEdge.label, fieldEntries);
-      const nextStatus: EntryStatus = hasAnyCompletedEntry(currentEdge.label, fieldEntries)
-        ? "filled"
-        : "empty";
-
-      const updatedEdge: EdgeEntry = {
-        ...currentEdge,
-        fieldEntries,
-        text: combinedText || null,
-        status: nextStatus,
-        isConfirmed: fieldEntries.length > 0,
-      };
-
-      const patch = buildPatch(session, "edge", generationIndex, edgeId, updatedEdge);
-      const nextSession = applySessionPatch(session, patch);
-      if (!nextSession) return state;
-
-      return {
-        session: nextSession,
-        lastMutation: patch,
-      };
-    }),
+    set((state) => applyFieldEntriesUpdate(state, "edge", generationIndex, edgeId, fieldEntries)),
 
   updateEdgeText: (generationIndex, edgeId, text) =>
     set((state) => {

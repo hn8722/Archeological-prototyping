@@ -554,7 +554,7 @@ export function CenterGraph({ collaborationPeers = [] }: { collaborationPeers?: 
             })}
           </svg>
 
-          {graphModel.generationIndexes.map((generationIndex, index) => (
+          {graphModel.generationIndexes.map((generationIndex) => (
             <div
               key={generationIndex}
               className="ap-generation-badge"
@@ -680,10 +680,11 @@ export function CenterGraph({ collaborationPeers = [] }: { collaborationPeers?: 
 function getUxNodeDecade(label: string, fieldEntries: Record<string, string>[]) {
   if (label !== "日常の空間とユーザー体験") return null;
 
-  const latestDecade = [...fieldEntries]
+  // YearPickerは "2020年" 形式で保存するため、その形式にマッチさせる
+  const latestYear = [...fieldEntries]
     .reverse()
     .map((entry) => entry.when?.trim())
-    .find((value): value is string => Boolean(value && /^\d{4}年代$/.test(value)));
+    .find((value): value is string => Boolean(value && /^\d{4}年$/.test(value)));
 
-  return latestDecade ?? null;
+  return latestYear ?? null;
 }

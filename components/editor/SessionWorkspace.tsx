@@ -139,7 +139,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
     <div className="workspace-page">
       <div className="workspace-topbar">
         <div>
-          <h1 className="workspace-title">Main Editing Screen</h1>
+          <h1 className="workspace-title">メインエディタ</h1>
         </div>
 
         <div className="horizontal-actions">
