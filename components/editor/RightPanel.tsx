@@ -131,6 +131,13 @@ function getNormalizedText(text: string | null) {
   return normalized || null;
 }
 
+function getTextareaRows(value: string, minRows = 2, maxRows = 18) {
+  const visualRows = value
+    .split("\n")
+    .reduce((rows, line) => rows + Math.max(1, Math.ceil(line.length / 42)), 0);
+  return Math.min(maxRows, Math.max(minRows, visualRows));
+}
+
 function dedupeRelatedItems(items: RelatedItem[]) {
   const seen = new Set<string>();
   return items.filter((item) => {
@@ -145,7 +152,7 @@ function getFilledRelatedItems(items: RelatedItem[]) {
   return items.filter((item) => Boolean(getNormalizedText(item.text)));
 }
 
-export function RightPanel({ collaborationPeers = [] }: { collaborationPeers?: OnlineMember[] }) {
+export function RightPanel({ sessionId, collaborationPeers = [] }: { sessionId: string; collaborationPeers?: OnlineMember[] }) {
   const session = useSessionStore((state) => state.session);
   const selectedTarget = useSessionStore((state) => state.selectedTarget);
   const selectTarget = useSessionStore((state) => state.selectTarget);
@@ -153,6 +160,8 @@ export function RightPanel({ collaborationPeers = [] }: { collaborationPeers?: O
   const appendEdgeFieldEntry = useSessionStore((state) => state.appendEdgeFieldEntry);
   const setNodeFieldEntries = useSessionStore((state) => state.setNodeFieldEntries);
   const setEdgeFieldEntries = useSessionStore((state) => state.setEdgeFieldEntries);
+  const updateNodeFieldEntry = useSessionStore((state) => state.updateNodeFieldEntry);
+  const updateEdgeFieldEntry = useSessionStore((state) => state.updateEdgeFieldEntry);
   const updateEdgeText = useSessionStore((state) => state.updateEdgeText);
 
   const selectedEntry = useMemo((): NodeEntry | EdgeEntry | null => {
@@ -293,6 +302,29 @@ export function RightPanel({ collaborationPeers = [] }: { collaborationPeers?: O
   const [videoUrl, setVideoUrl] = useState("");
   const [isVideoAnalyzing, setIsVideoAnalyzing] = useState(false);
   const [videoError, setVideoError] = useState<string | null>(null);
+  const heldLockRef = useRef<{
+    generation: number;
+    kind: "node" | "edge";
+    entryId: string;
+    entryIndex: number;
+  } | null>(null);
+
+  const releaseLockTarget = async (target: {
+    generation: number;
+    kind: "node" | "edge";
+    entryId: string;
+    entryIndex: number;
+  }) => {
+    try {
+      await fetch(`/api/sessions/${sessionId}/locks`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target }),
+      });
+    } catch {
+      // The server-side lock has a TTL, so a missed release will expire.
+    }
+  };
 
   // selectedTarget が変わるたびにフォームをリセット
   useEffect(() => {
@@ -323,6 +355,38 @@ export function RightPanel({ collaborationPeers = [] }: { collaborationPeers?: O
     }
     setEditingChips({});
     setFreeText(selectedEntry.text ?? "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTarget]);
+
+  useEffect(() => {
+    const nextLock =
+      selectedTarget?.entryIndex !== undefined && selectedTarget.mode === "editing"
+        ? {
+            generation: selectedTarget.generation,
+            kind: selectedTarget.kind,
+            entryId: selectedTarget.id,
+            entryIndex: selectedTarget.entryIndex,
+          }
+        : null;
+    const previousLock = heldLockRef.current;
+    const previousKey = previousLock
+      ? `${previousLock.generation}:${previousLock.kind}:${previousLock.entryId}:${previousLock.entryIndex}`
+      : null;
+    const nextKey = nextLock
+      ? `${nextLock.generation}:${nextLock.kind}:${nextLock.entryId}:${nextLock.entryIndex}`
+      : null;
+
+    if (previousLock && previousKey !== nextKey) {
+      void releaseLockTarget(previousLock);
+    }
+    heldLockRef.current = nextLock;
+
+    return () => {
+      if (heldLockRef.current) {
+        void releaseLockTarget(heldLockRef.current);
+        heldLockRef.current = null;
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTarget]);
 
@@ -445,6 +509,17 @@ export function RightPanel({ collaborationPeers = [] }: { collaborationPeers?: O
     setImageGenerationError(null);
   };
 
+  const releaseCurrentLock = async () => {
+    if (!selectedTarget || selectedTarget.entryIndex === undefined || selectedTarget.mode !== "editing") return;
+    await releaseLockTarget({
+      generation: selectedTarget.generation,
+      kind: selectedTarget.kind,
+      entryId: selectedTarget.id,
+      entryIndex: selectedTarget.entryIndex,
+    });
+    heldLockRef.current = null;
+  };
+
   const commitEntry = () => {
     if (!selectedTarget || isReadOnlyEntry) return;
 
@@ -463,16 +538,15 @@ export function RightPanel({ collaborationPeers = [] }: { collaborationPeers?: O
         appendEdgeFieldEntry(selectedTarget.generation, selectedTarget.id, mergedEditingFields);
       }
     } else {
-      const newEntries = currentEntries.map((e, i) => (i === entryIndex ? mergedEditingFields : e));
-
       if (selectedTarget.kind === "node") {
-        setNodeFieldEntries(selectedTarget.generation, selectedTarget.id, newEntries);
+        updateNodeFieldEntry(selectedTarget.generation, selectedTarget.id, entryIndex, mergedEditingFields);
       } else {
-        setEdgeFieldEntries(selectedTarget.generation, selectedTarget.id, newEntries);
+        updateEdgeFieldEntry(selectedTarget.generation, selectedTarget.id, entryIndex, mergedEditingFields);
       }
     }
 
     // 追加/更新後は新規追加モードにリセット
+    void releaseCurrentLock();
     selectTarget({
       generation: selectedTarget.generation,
       kind: selectedTarget.kind,
@@ -494,6 +568,7 @@ export function RightPanel({ collaborationPeers = [] }: { collaborationPeers?: O
 
   const handleCancel = () => {
     if (!selectedTarget) return;
+    void releaseCurrentLock();
     selectTarget({
       generation: selectedTarget.generation,
       kind: selectedTarget.kind,
@@ -603,56 +678,65 @@ export function RightPanel({ collaborationPeers = [] }: { collaborationPeers?: O
                 <p className="selected-model-hint-text">{modelHint}</p>
               </div>
             )}
-          </div>
+            {shouldShowImageCheck && (
+              <div className="intent-image-check">
+                <div className="intent-image-check-header">
+                  <div>
+                    <p className="intent-image-check-title">意図の画像確認</p>
+                    <p className="intent-image-check-note">
+                      入力した内容を画像化し、意図が反映されているか確認できます。
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className={
+                      canConfirm && !isGeneratingImage
+                        ? `button-secondary intent-image-trigger ${shouldHighlightImageCheck ? "intent-image-trigger-ready" : ""}`
+                        : "button-disabled"
+                    }
+                    onClick={handleGenerateIntentImage}
+                    disabled={!canConfirm || isGeneratingImage || isReadOnlyEntry}
+                  >
+                    {isGeneratingImage ? "画像生成中..." : generatedImage ? "画像を再生成" : "画像で確認"}
+                  </button>
+                </div>
 
-          {/* 関連モデル（ノード選択時のみ） */}
-          {selectedTarget.kind === "node" && (
-            <div className="related-model-layout">
-              <label className="form-label" style={{ gridColumn: "1 / -1", marginBottom: 0 }}>関連するもの</label>
-              <div className="sub-box related-model-group-card">
-                <p className="related-model-title">影響を受けるモデル</p>
-                {filledAffectedNodes.length > 0 || filledAffectedEdges.length > 0 ? (
-                  <>
-                    {filledAffectedNodes.map((item) => (
-                      <article key={`affected-node-${item.label}`} className="related-model-card">
-                        <p className="related-model-card-name">{item.label}</p>
-                        <p className="related-model-card-text">{item.text}</p>
-                      </article>
-                    ))}
-                    {filledAffectedEdges.map((item) => (
-                      <article key={`affected-edge-${item.label}`} className="related-model-card">
-                        <p className="related-model-card-name">{item.label}</p>
-                        <p className="related-model-card-text">{item.text}</p>
-                      </article>
-                    ))}
-                  </>
-                ) : (
-                  <p className="related-model-empty">該当するモデルはまだありません。</p>
+                {imageGenerationError && <p className="ai-assist-error">{imageGenerationError}</p>}
+
+                {generatedImage && (
+                  <div className="intent-image-result">
+                    <img src={generatedImage} alt="入力意図の確認画像" className="intent-image-preview" />
+                    <div className="intent-image-actions">
+                      <button
+                        type="button"
+                        className={imageReviewStatus === "ok" ? "button-primary" : "button-secondary"}
+                        onClick={handleApproveGeneratedImage}
+                        disabled={isReadOnlyEntry}
+                      >
+                        OK・反映する
+                      </button>
+                      <button
+                        type="button"
+                        className={imageReviewStatus === "insufficient" ? "button-primary" : "button-secondary"}
+                        onClick={() => {
+                          if (isReadOnlyEntry) return;
+                          setImageReviewStatus("insufficient");
+                        }}
+                        disabled={isReadOnlyEntry}
+                      >
+                        不十分
+                      </button>
+                    </div>
+                    {imageReviewStatus === "insufficient" && (
+                      <p className="intent-image-feedback intent-image-feedback-warn">
+                        まだ反映しません。テキスト入力をより具体的にしてから、画像を再生成してください。対象、場面、利用者、変化、制約を追加すると反映されやすくなります。
+                      </p>
+                    )}
+                  </div>
                 )}
               </div>
-              <div className="sub-box related-model-group-card">
-                <p className="related-model-title">影響を与えるモデル</p>
-                {filledAffectingNodes.length > 0 || filledAffectingEdges.length > 0 ? (
-                  <>
-                    {filledAffectingNodes.map((item) => (
-                      <article key={`affecting-node-${item.label}`} className="related-model-card">
-                        <p className="related-model-card-name">{item.label}</p>
-                        <p className="related-model-card-text">{item.text}</p>
-                      </article>
-                    ))}
-                    {filledAffectingEdges.map((item) => (
-                      <article key={`affecting-edge-${item.label}`} className="related-model-card">
-                        <p className="related-model-card-name">{item.label}</p>
-                        <p className="related-model-card-text">{item.text}</p>
-                      </article>
-                    ))}
-                  </>
-                ) : (
-                  <p className="related-model-empty">該当するモデルはまだありません。</p>
-                )}
-              </div>
-            </div>
-          )}
+            )}
+          </div>
 
           {/* 入力フォーム */}
           <div className="entry-form-section">
@@ -808,7 +892,7 @@ export function RightPanel({ collaborationPeers = [] }: { collaborationPeers?: O
                             onChange={(e) => setEditingFields((prev) => ({ ...prev, [def.key]: e.target.value }))}
                             placeholder={def.placeholder ?? ""}
                             disabled={isReadOnlyEntry}
-                            rows={2}
+                            rows={getTextareaRows(value)}
                           />
                         )}
                       </div>
@@ -822,6 +906,7 @@ export function RightPanel({ collaborationPeers = [] }: { collaborationPeers?: O
                   onChange={(e) => setFreeText(e.target.value)}
                   disabled={isReadOnlyEntry}
                   placeholder="ここに内容を入力"
+                  rows={getTextareaRows(freeText, 6, 24)}
                 />
               )}
 
@@ -833,65 +918,6 @@ export function RightPanel({ collaborationPeers = [] }: { collaborationPeers?: O
               )}
 
               {aiError && <p className="ai-assist-error">{aiError}</p>}
-
-              {shouldShowImageCheck && (
-                <div className="intent-image-check">
-                  <div className="intent-image-check-header">
-                    <div>
-                      <p className="intent-image-check-title">意図の画像確認</p>
-                      <p className="intent-image-check-note">
-                        入力した内容を画像化し、意図が反映されているか確認できます。
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      className={
-                        canConfirm && !isGeneratingImage
-                          ? `button-secondary intent-image-trigger ${shouldHighlightImageCheck ? "intent-image-trigger-ready" : ""}`
-                          : "button-disabled"
-                      }
-                      onClick={handleGenerateIntentImage}
-                      disabled={!canConfirm || isGeneratingImage || isReadOnlyEntry}
-                    >
-                      {isGeneratingImage ? "画像生成中..." : generatedImage ? "画像を再生成" : "画像で確認"}
-                    </button>
-                  </div>
-
-                  {imageGenerationError && <p className="ai-assist-error">{imageGenerationError}</p>}
-
-                  {generatedImage && (
-                    <div className="intent-image-result">
-                      <img src={generatedImage} alt="入力意図の確認画像" className="intent-image-preview" />
-                      <div className="intent-image-actions">
-                        <button
-                          type="button"
-                          className={imageReviewStatus === "ok" ? "button-primary" : "button-secondary"}
-                          onClick={handleApproveGeneratedImage}
-                          disabled={isReadOnlyEntry}
-                        >
-                          OK・反映する
-                        </button>
-                        <button
-                          type="button"
-                          className={imageReviewStatus === "insufficient" ? "button-primary" : "button-secondary"}
-                          onClick={() => {
-                            if (isReadOnlyEntry) return;
-                            setImageReviewStatus("insufficient");
-                          }}
-                          disabled={isReadOnlyEntry}
-                        >
-                          不十分
-                        </button>
-                      </div>
-                      {imageReviewStatus === "insufficient" && (
-                        <p className="intent-image-feedback intent-image-feedback-warn">
-                          まだ反映しません。テキスト入力をより具体的にしてから、画像を再生成してください。対象、場面、利用者、変化、制約を追加すると反映されやすくなります。
-                        </p>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
 
               {aiSuggestions && hasFieldSchema && (
                 <div className="ai-assist-suggestions">
@@ -1044,6 +1070,55 @@ export function RightPanel({ collaborationPeers = [] }: { collaborationPeers?: O
               </div>
             )}
           </div>
+
+          {/* 関連モデル（ノード選択時のみ） */}
+          {selectedTarget.kind === "node" && (
+            <div className="related-model-layout">
+              <label className="form-label" style={{ gridColumn: "1 / -1", marginBottom: 0 }}>関連するもの</label>
+              <div className="sub-box related-model-group-card">
+                <p className="related-model-title">影響を受けるモデル</p>
+                {filledAffectedNodes.length > 0 || filledAffectedEdges.length > 0 ? (
+                  <>
+                    {filledAffectedNodes.map((item) => (
+                      <article key={`affected-node-${item.label}`} className="related-model-card">
+                        <p className="related-model-card-name">{item.label}</p>
+                        <p className="related-model-card-text">{item.text}</p>
+                      </article>
+                    ))}
+                    {filledAffectedEdges.map((item) => (
+                      <article key={`affected-edge-${item.label}`} className="related-model-card">
+                        <p className="related-model-card-name">{item.label}</p>
+                        <p className="related-model-card-text">{item.text}</p>
+                      </article>
+                    ))}
+                  </>
+                ) : (
+                  <p className="related-model-empty">該当するモデルはまだありません。</p>
+                )}
+              </div>
+              <div className="sub-box related-model-group-card">
+                <p className="related-model-title">影響を与えるモデル</p>
+                {filledAffectingNodes.length > 0 || filledAffectingEdges.length > 0 ? (
+                  <>
+                    {filledAffectingNodes.map((item) => (
+                      <article key={`affecting-node-${item.label}`} className="related-model-card">
+                        <p className="related-model-card-name">{item.label}</p>
+                        <p className="related-model-card-text">{item.text}</p>
+                      </article>
+                    ))}
+                    {filledAffectingEdges.map((item) => (
+                      <article key={`affecting-edge-${item.label}`} className="related-model-card">
+                        <p className="related-model-card-name">{item.label}</p>
+                        <p className="related-model-card-text">{item.text}</p>
+                      </article>
+                    ))}
+                  </>
+                ) : (
+                  <p className="related-model-empty">該当するモデルはまだありません。</p>
+                )}
+              </div>
+            </div>
+          )}
         </>
       )}
     </aside>

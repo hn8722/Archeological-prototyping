@@ -2,7 +2,7 @@
 
 import { use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Undo2, Pencil, PencilLine, ArrowDownToLine } from "lucide-react";
+import { Undo2, Pencil, PencilLine, Download } from "lucide-react";
 import { useSessionStore } from "@/store/useSessionStore";
 import { FieldEntry, SessionModel } from "@/lib/types/ap";
 import { formatGenerationLabel } from "@/lib/utils/generationLabel";
@@ -141,6 +141,32 @@ function buildStoryMarkdown({
   ].filter((line): line is string => line !== null);
 
   return lines.join("\n");
+}
+
+function buildStoryPlainText({
+  sessionName,
+  story,
+  generationStories,
+  storyParams,
+  personas,
+}: {
+  sessionName: string;
+  story: string;
+  generationStories: GenerationStory[];
+  storyParams: StoryParams;
+  personas: PersonaCandidate[];
+}) {
+  return buildStoryMarkdown({ sessionName, story, generationStories, storyParams, personas })
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^\-\s+/gm, "・");
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 function ChipGroup({
@@ -392,27 +418,79 @@ export default function StoryPage({
     }
   };
 
-  const handleDownloadStory = () => {
+  const buildDownloadPayload = () => {
     if (!story || !session) return;
 
-    const markdown = buildStoryMarkdown({
+    return {
       sessionName: session.name,
       story,
       generationStories,
       storyParams,
       personas: selectedPersonas,
-    });
-    const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
+    };
+  };
+
+  const handleDownloadText = () => {
+    const payload = buildDownloadPayload();
+    if (!payload) return;
+
+    const text = buildStoryPlainText(payload);
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     const date = new Date().toISOString().slice(0, 10);
 
     link.href = url;
-    link.download = `${sanitizeFileName(session.name)}-story-${date}.md`;
+    link.download = `${sanitizeFileName(payload.sessionName)}-story-${date}.txt`;
     document.body.appendChild(link);
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadPdf = () => {
+    const payload = buildDownloadPayload();
+    if (!payload) return;
+
+    const text = buildStoryPlainText(payload);
+    const printWindow = window.open("", "_blank", "noopener,noreferrer");
+    if (!printWindow) {
+      setErrorMessage("PDF保存用のウィンドウを開けませんでした。ポップアップ設定を確認してください。");
+      return;
+    }
+
+    printWindow.document.write(`
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>${escapeHtml(payload.sessionName)} story</title>
+          <style>
+            body {
+              font-family: "Yu Gothic", "Hiragino Sans", sans-serif;
+              color: #111827;
+              line-height: 1.8;
+              padding: 32px;
+            }
+            pre {
+              white-space: pre-wrap;
+              word-break: break-word;
+              font-family: inherit;
+              font-size: 12pt;
+            }
+          </style>
+        </head>
+        <body>
+          <pre>${escapeHtml(text)}</pre>
+          <script>
+            window.onload = () => {
+              window.print();
+            };
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
   };
 
   const togglePersona = (key: string) => {
@@ -664,13 +742,25 @@ export default function StoryPage({
             onClick={handleSaveStoryToApp}
             disabled={isSavingStory || isStorySaved}
           >
-            <ArrowDownToLine size={15} />
+            <Download size={15} />
             {isSavingStory ? "保存中..." : isStorySaved ? "アプリに保存済み" : "アプリに保存"}
           </button>
-          <button type="button" className="button-secondary" onClick={handleDownloadStory}>
-            <ArrowDownToLine size={15} />
-            Markdownで保存
-          </button>
+          <div className="story-download-menu">
+            <button type="button" className="button-secondary story-download-trigger">
+              <Download size={15} />
+              ファイル保存
+            </button>
+            <div className="story-download-options" role="menu">
+              <button type="button" onClick={handleDownloadPdf} role="menuitem">
+                <Download size={14} />
+                PDFとして保存
+              </button>
+              <button type="button" onClick={handleDownloadText} role="menuitem">
+                <Download size={14} />
+                TXTとして保存
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

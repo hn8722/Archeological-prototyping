@@ -12,6 +12,19 @@ import {
 import { applySessionPatch, normalizeSession } from "@/lib/session/patch";
 
 export const WORKSHOP_PARTICIPANT_COOKIE = "ap_workshop_participant";
+const EDIT_LOCK_TTL_MS = 2 * 60 * 1000;
+
+export type EditLockTarget = {
+  generation: number;
+  kind: "node" | "edge";
+  entryId: string;
+  entryIndex: number;
+};
+
+export type EditActor = {
+  id: string;
+  label?: string | null;
+};
 
 function hashWorkshopToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
@@ -696,21 +709,209 @@ export async function saveSessionRecord(session: SessionModel) {
   return deserializeSession(saved.snapshot);
 }
 
-export async function applySessionPatchRecord(sessionId: string, patch: SessionPatch) {
-  const currentSession = (await getSessionRecord(sessionId)) ?? buildInitialSession(sessionId);
-  const normalizedCurrent = normalizeSession(currentSession);
+export async function saveSessionRecordIfRevisionMatches(session: SessionModel) {
+  const normalizedSession = normalizeSession(session);
+  return prisma.$transaction(async (tx) => {
+    const rows = await tx.$queryRaw<Array<{ snapshot: string }>>(Prisma.sql`
+      SELECT "snapshot"
+      FROM "Session"
+      WHERE "id" = ${normalizedSession.id}
+      FOR UPDATE
+    `);
+    const currentSession = rows[0] ? deserializeSession(rows[0].snapshot) : null;
 
-  if (normalizedCurrent.revision > patch.nextRevision) {
-    return { ok: false as const, session: normalizedCurrent };
+    if (currentSession && normalizeSession(currentSession).revision > normalizedSession.revision) {
+      return { ok: false as const, session: normalizeSession(currentSession) };
+    }
+
+    const saved = await tx.session.upsert({
+      where: { id: normalizedSession.id },
+      create: {
+        id: normalizedSession.id,
+        name: normalizedSession.name,
+        snapshot: JSON.stringify(normalizedSession),
+      },
+      update: {
+        name: normalizedSession.name,
+        snapshot: JSON.stringify(normalizedSession),
+      },
+    });
+
+    return { ok: true as const, session: deserializeSession(saved.snapshot) };
+  });
+}
+
+async function cleanupExpiredEditLocks() {
+  await prisma.$executeRaw(Prisma.sql`
+    DELETE FROM "EditLock"
+    WHERE "expiresAt" <= NOW()
+  `);
+}
+
+export async function acquireEditLock(
+  sessionId: string,
+  target: EditLockTarget,
+  actor: EditActor
+) {
+  await cleanupExpiredEditLocks();
+
+  type LockRow = {
+    id: string;
+    ownerId: string;
+    ownerLabel: string | null;
+    expiresAt: Date;
+  };
+
+  const existingRows = await prisma.$queryRaw<LockRow[]>(Prisma.sql`
+    SELECT "id", "ownerId", "ownerLabel", "expiresAt"
+    FROM "EditLock"
+    WHERE "sessionId" = ${sessionId}
+      AND "generation" = ${target.generation}
+      AND "kind" = ${target.kind}
+      AND "entryId" = ${target.entryId}
+      AND "entryIndex" = ${target.entryIndex}
+      AND "expiresAt" > NOW()
+    LIMIT 1
+  `);
+  const existing = existingRows[0];
+
+  if (existing && existing.ownerId !== actor.id) {
+    return { ok: false as const, lock: existing };
   }
 
-  const nextSession = applySessionPatch(normalizedCurrent, patch);
-  if (!nextSession) {
-    return { ok: false as const, session: normalizedCurrent };
+  const lockId = existing?.id ?? randomUUID();
+  const expiresAt = new Date(Date.now() + EDIT_LOCK_TTL_MS);
+
+  await prisma.$executeRaw(Prisma.sql`
+    INSERT INTO "EditLock" (
+      "id", "sessionId", "generation", "kind", "entryId", "entryIndex",
+      "ownerId", "ownerLabel", "expiresAt", "createdAt", "updatedAt"
+    )
+    VALUES (
+      ${lockId}, ${sessionId}, ${target.generation}, ${target.kind}, ${target.entryId}, ${target.entryIndex},
+      ${actor.id}, ${actor.label ?? null}, ${expiresAt}, NOW(), NOW()
+    )
+    ON CONFLICT ("sessionId", "generation", "kind", "entryId", "entryIndex")
+    DO UPDATE SET
+      "ownerId" = EXCLUDED."ownerId",
+      "ownerLabel" = EXCLUDED."ownerLabel",
+      "expiresAt" = EXCLUDED."expiresAt",
+      "updatedAt" = NOW()
+    WHERE "EditLock"."ownerId" = ${actor.id}
+       OR "EditLock"."expiresAt" <= NOW()
+  `);
+
+  return { ok: true as const, lock: { id: lockId, ownerId: actor.id, ownerLabel: actor.label ?? null, expiresAt } };
+}
+
+export async function releaseEditLock(
+  sessionId: string,
+  target: EditLockTarget,
+  actor: EditActor
+) {
+  await prisma.$executeRaw(Prisma.sql`
+    DELETE FROM "EditLock"
+    WHERE "sessionId" = ${sessionId}
+      AND "generation" = ${target.generation}
+      AND "kind" = ${target.kind}
+      AND "entryId" = ${target.entryId}
+      AND "entryIndex" = ${target.entryIndex}
+      AND "ownerId" = ${actor.id}
+  `);
+}
+
+async function canActorEditExistingEntry(
+  sessionId: string,
+  patch: SessionPatch,
+  actor: EditActor
+) {
+  if ((patch.targetKind !== "node" && patch.targetKind !== "edge") || patch.entryIndex === undefined) {
+    return true;
   }
 
-  const savedSession = await saveSessionRecord(nextSession);
-  return { ok: true as const, session: savedSession };
+  await cleanupExpiredEditLocks();
+
+  const rows = await prisma.$queryRaw<Array<{ ownerId: string }>>(Prisma.sql`
+    SELECT "ownerId"
+    FROM "EditLock"
+    WHERE "sessionId" = ${sessionId}
+      AND "generation" = ${patch.generationIndex}
+      AND "kind" = ${patch.targetKind}
+      AND "entryId" = ${patch.entryId}
+      AND "entryIndex" = ${patch.entryIndex}
+      AND "expiresAt" > NOW()
+    LIMIT 1
+  `);
+
+  return rows[0]?.ownerId === actor.id;
+}
+
+export async function applySessionPatchRecord(sessionId: string, patch: SessionPatch, actor?: EditActor) {
+  if (actor && !(await canActorEditExistingEntry(sessionId, patch, actor))) {
+    const currentSession = (await getSessionRecord(sessionId)) ?? buildInitialSession(sessionId);
+    const normalizedCurrent = normalizeSession(currentSession);
+    return { ok: false as const, session: normalizedCurrent, reason: "locked" as const };
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const rows = await tx.$queryRaw<Array<{ snapshot: string; name: string; isGroup: boolean | number; ownerId: string | null }>>(Prisma.sql`
+      SELECT "snapshot", "name", "isGroup", "ownerId"
+      FROM "Session"
+      WHERE "id" = ${sessionId}
+      FOR UPDATE
+    `);
+    const currentSession = rows[0] ? deserializeSession(rows[0].snapshot) : buildInitialSession(sessionId);
+    const normalizedCurrent = normalizeSession(currentSession);
+
+    if (patch.targetKind === "nodeFieldEntryAppend" || patch.targetKind === "edgeFieldEntryAppend") {
+      const nextPatch: SessionPatch = {
+        ...patch,
+        baseRevision: normalizedCurrent.revision,
+        nextRevision: normalizedCurrent.revision + 1,
+      };
+      const nextSession = applySessionPatch(normalizedCurrent, nextPatch);
+      if (!nextSession) {
+        return { ok: false as const, session: normalizedCurrent, reason: "conflict" as const };
+      }
+
+      const saved = await tx.session.upsert({
+        where: { id: nextSession.id },
+        create: {
+          id: nextSession.id,
+          name: nextSession.name,
+          snapshot: JSON.stringify(nextSession),
+        },
+        update: {
+          name: nextSession.name,
+          snapshot: JSON.stringify(nextSession),
+        },
+      });
+      return { ok: true as const, session: deserializeSession(saved.snapshot) };
+    }
+
+    if (normalizedCurrent.revision > patch.nextRevision) {
+      return { ok: false as const, session: normalizedCurrent, reason: "conflict" as const };
+    }
+
+    const nextSession = applySessionPatch(normalizedCurrent, patch);
+    if (!nextSession) {
+      return { ok: false as const, session: normalizedCurrent, reason: "conflict" as const };
+    }
+
+    const saved = await tx.session.upsert({
+      where: { id: nextSession.id },
+      create: {
+        id: nextSession.id,
+        name: nextSession.name,
+        snapshot: JSON.stringify(nextSession),
+      },
+      update: {
+        name: nextSession.name,
+        snapshot: JSON.stringify(nextSession),
+      },
+    });
+    return { ok: true as const, session: deserializeSession(saved.snapshot) };
+  });
 }
 
 export async function setSessionPublic(sessionId: string, isPublic: boolean) {

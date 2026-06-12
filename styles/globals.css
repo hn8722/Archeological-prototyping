@@ -685,7 +685,14 @@ a {
   resize: vertical;
   background: #fff;
   color: #14202b;
+  overflow: visible;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+textarea.field-input,
+.form-textarea {
+  height: auto;
+  overflow: hidden;
 }
 
 .field-input:focus {
@@ -738,6 +745,7 @@ a {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  overflow: visible;
 }
 
 .ai-assist-suggestions-title {
@@ -792,6 +800,9 @@ a {
   border: 1px solid #e4e7ec;
   border-radius: 8px;
   padding: 6px 8px;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .ai-assist-use-all-button {
@@ -2695,6 +2706,59 @@ a {
   margin-top: 32px;
 }
 
+.story-download-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.story-download-trigger {
+  position: relative;
+}
+
+.story-download-options {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 30;
+  min-width: 180px;
+  padding: 6px;
+  border: 1px solid #d0d5dd;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.16);
+  display: none;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.story-download-menu:hover .story-download-options,
+.story-download-menu:focus-within .story-download-options {
+  display: flex;
+}
+
+.story-download-options button {
+  width: 100%;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #101828;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  text-align: left;
+}
+
+.story-download-options button:hover,
+.story-download-options button:focus-visible {
+  background: #f3f4f6;
+  outline: none;
+}
+
 .story-direction-label {
   margin: 0;
   font-size: 12px;
@@ -2837,11 +2901,21 @@ a {
   .story-direction-actions .button-secondary,
   .story-footer-actions .button-primary,
   .story-footer-actions .button-secondary,
+  .story-download-menu,
   .entry-form-actions .button-primary,
   .entry-form-actions .button-secondary,
   .intent-image-actions .button-primary,
   .intent-image-actions .button-secondary {
     width: 100%;
+  }
+
+  .story-download-menu {
+    display: flex;
+  }
+
+  .story-download-options {
+    left: 0;
+    right: 0;
   }
 }
 
@@ -3330,17 +3404,18 @@ a {
 
 /* モードパネル（アコーディオン） */
 .input-mode-panel {
-  overflow: hidden;
+  overflow: visible;
   transition: max-height 0.22s ease, opacity 0.18s ease;
 }
 
 .input-mode-panel-open {
-  max-height: 800px;
+  max-height: none;
   opacity: 1;
 }
 
 .input-mode-panel-closed {
   max-height: 0;
+  overflow: hidden;
   opacity: 0;
   pointer-events: none;
 }

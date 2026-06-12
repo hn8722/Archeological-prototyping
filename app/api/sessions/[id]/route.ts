@@ -7,7 +7,7 @@ import {
   canWriteSession,
   deleteSessionRecord,
   getSessionRecord,
-  saveSessionRecord,
+  saveSessionRecordIfRevisionMatches,
   WORKSHOP_PARTICIPANT_COOKIE,
 } from "@/lib/server/session-store";
 import { getUser } from "@/lib/auth/actions";
@@ -15,6 +15,17 @@ import { SessionModel, SessionPatch } from "@/lib/types/ap";
 
 async function getParticipantToken() {
   return (await cookies()).get(WORKSHOP_PARTICIPANT_COOKIE)?.value;
+}
+
+function getEditActor(
+  user: Awaited<ReturnType<typeof getUser>>,
+  access: Awaited<ReturnType<typeof canWriteSession>>
+) {
+  if (user?.id) return { id: `user:${user.id}`, label: user.email ?? user.id };
+  if ("participant" in access && access.participant) {
+    return { id: `participant:${access.participant.id}`, label: access.participant.name };
+  }
+  return null;
 }
 
 export async function GET(
@@ -70,8 +81,15 @@ export async function PUT(
       return NextResponse.json({ error: "このセッションを編集する権限がありません。" }, { status: 403 });
     }
 
-    const session = await saveSessionRecord(body.session);
-    return NextResponse.json({ session });
+    const result = await saveSessionRecordIfRevisionMatches(body.session);
+    if (!result.ok) {
+      return NextResponse.json(
+        { error: "最新の変更と競合しました。", session: result.session },
+        { status: 409 }
+      );
+    }
+
+    return NextResponse.json({ session: result.session });
   } catch (error) {
     console.error("Failed to save session", error);
     return NextResponse.json({ error: "セッションの保存に失敗しました。" }, { status: 500 });
@@ -100,10 +118,16 @@ export async function PATCH(
       return NextResponse.json({ error: "このセッションを編集する権限がありません。" }, { status: 403 });
     }
 
-    const result = await applySessionPatchRecord(id, body.patch);
+    const actor = getEditActor(user, access);
+    const result = await applySessionPatchRecord(id, body.patch, actor ?? undefined);
     if (!result.ok) {
       return NextResponse.json(
-        { error: "最新の変更と競合しました。", session: result.session },
+        {
+          error: result.reason === "locked"
+            ? "この記述は他の参加者が編集中です。"
+            : "最新の変更と競合しました。",
+          session: result.session,
+        },
         { status: 409 }
       );
     }

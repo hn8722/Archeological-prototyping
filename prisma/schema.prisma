@@ -67,3 +67,21 @@ model GroupMember {
   @@unique([sessionId, userId])
   @@index([userId])
 }
+
+model EditLock {
+  id         String   @id @default(cuid())
+  sessionId  String
+  generation Int
+  kind       String
+  entryId    String
+  entryIndex Int
+  ownerId    String
+  ownerLabel String?
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([sessionId, generation, kind, entryId, entryIndex])
+  @@index([ownerId])
+  @@index([expiresAt])
+}

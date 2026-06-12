@@ -14,6 +14,38 @@ import { useOnlineMembers } from "@/lib/realtime/useOnlineMembers";
 
 type SaveState = "idle" | "saving" | "saved" | "error" | "conflict";
 
+type CachedSession = {
+  savedAt: number;
+  session: SessionModel;
+};
+
+function getSessionCacheKey(sessionId: string) {
+  return `ap-session-cache:${sessionId}`;
+}
+
+function readCachedSession(sessionId: string): CachedSession | null {
+  try {
+    const raw = window.localStorage.getItem(getSessionCacheKey(sessionId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as CachedSession;
+    if (parsed.session?.id !== sessionId) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedSession(session: SessionModel) {
+  try {
+    window.localStorage.setItem(
+      getSessionCacheKey(session.id),
+      JSON.stringify({ savedAt: Date.now(), session } satisfies CachedSession)
+    );
+  } catch {
+    // localStorage can fail in private mode or when quota is exceeded.
+  }
+}
+
 export function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const initializeSession = useSessionStore((state) => state.initializeSession);
   const session = useSessionStore((state) => state.session);
@@ -28,6 +60,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const [collaborationName, setCollaborationName] = useState("");
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const hasHydratedRef = useRef(false);
+  const restoredLocalSessionRef = useRef<SessionModel | null>(null);
 
   useSessionRealtime(sessionId);
   const { count: onlineCount, peers } = useOnlineMembers(
@@ -61,6 +94,23 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
     }
   }, [setSession]);
 
+  const persistFullSession = useCallback(async (sessionToPersist: SessionModel) => {
+    setSaveState("saving");
+    try {
+      const response = await fetch(`/api/sessions/${sessionToPersist.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session: sessionToPersist }),
+      });
+
+      if (!response.ok) throw new Error("Failed to save cached session");
+      setSaveState("saved");
+    } catch (error) {
+      console.error(error);
+      setSaveState("error");
+    }
+  }, []);
+
   useEffect(() => {
     let isActive = true;
 
@@ -75,9 +125,16 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
           isGroup?: boolean;
           participant?: { id: string; name: string } | null;
         };
-        const nextSession = data.session ?? mockSession(sessionId);
+        const serverSession = data.session ?? mockSession(sessionId);
+        const cached = readCachedSession(sessionId);
+        const nextSession =
+          cached && cached.session.revision >= serverSession.revision
+            ? cached.session
+            : serverSession;
 
         if (!isActive) return;
+        restoredLocalSessionRef.current =
+          cached && cached.session.revision > serverSession.revision ? cached.session : null;
         const nextIsGroupSession = Boolean(data.isGroup);
         setIsGroupSession(nextIsGroupSession);
         if (nextIsGroupSession) {
@@ -90,10 +147,16 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
         }
         initializeSession(nextSession);
         hasHydratedRef.current = true;
+        if (restoredLocalSessionRef.current) {
+          void persistFullSession(restoredLocalSessionRef.current);
+        }
       } catch (error) {
         console.error(error);
         if (!isActive) return;
-        initializeSession(mockSession(sessionId));
+        const cached = readCachedSession(sessionId);
+        const fallbackSession = cached?.session ?? mockSession(sessionId);
+        restoredLocalSessionRef.current = cached?.session ?? null;
+        initializeSession(fallbackSession);
         hasHydratedRef.current = true;
         setLoadFailed(true);
       } finally {
@@ -105,7 +168,12 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
     return () => {
       isActive = false;
     };
-  }, [initializeSession, sessionId]);
+  }, [initializeSession, persistFullSession, sessionId]);
+
+  useEffect(() => {
+    if (!session || !hasHydratedRef.current) return;
+    writeCachedSession(session);
+  }, [session]);
 
   useEffect(() => {
     if (!lastMutation || !session || !hasHydratedRef.current || isLoading) return;
@@ -165,8 +233,8 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
           <CenterGraph collaborationPeers={peers} />
         </div>
         <div className="workspace-bottom">
-          <LeftPanel collaborationPeers={peers} />
-          <RightPanel collaborationPeers={peers} />
+          <LeftPanel sessionId={sessionId} collaborationPeers={peers} />
+          <RightPanel sessionId={sessionId} collaborationPeers={peers} />
         </div>
       </div>
 

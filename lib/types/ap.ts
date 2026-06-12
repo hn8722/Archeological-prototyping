@@ -61,6 +61,7 @@ export type SessionPatch = {
   generationIndex: number;
   targetKind: "node" | "edge" | "generation" | "nodeFieldEntryAppend" | "edgeFieldEntryAppend";
   entryId: string;
+  entryIndex?: number;
   entry: NodeEntry | EdgeEntry | GenerationModel | FieldEntry;
 };
 

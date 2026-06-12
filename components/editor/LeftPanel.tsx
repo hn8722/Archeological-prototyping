@@ -9,7 +9,7 @@ import { NodeEntry, EdgeEntry, FieldEntry } from "@/lib/types/ap";
 import { formatGenerationLabel } from "@/lib/utils/generationLabel";
 import { OnlineMember } from "@/lib/realtime/useOnlineMembers";
 
-export function LeftPanel({ collaborationPeers = [] }: { collaborationPeers?: OnlineMember[] }) {
+export function LeftPanel({ sessionId, collaborationPeers = [] }: { sessionId: string; collaborationPeers?: OnlineMember[] }) {
   const session = useSessionStore((state) => state.session);
   const activeGeneration = useSessionStore((state) => state.activeGeneration);
   const selectedTarget = useSessionStore((state) => state.selectedTarget);
@@ -93,6 +93,30 @@ export function LeftPanel({ collaborationPeers = [] }: { collaborationPeers?: On
     });
   }
 
+  async function acquireEntryLock(
+    kind: "node" | "edge",
+    entryId: string,
+    entryIndex: number
+  ) {
+    try {
+      const response = await fetch(`/api/sessions/${sessionId}/locks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          target: {
+            generation: currentGeneration.generationIndex,
+            kind,
+            entryId,
+            entryIndex,
+          },
+        }),
+      });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }
+
   function renderEntries(entry: NodeEntry | EdgeEntry, kind: "node" | "edge") {
     const isOpen = kind === "node" ? selectedNodeId === entry.templateId : selectedEdgeId === entry.templateId;
     if (!isOpen) return null;
@@ -154,15 +178,18 @@ export function LeftPanel({ collaborationPeers = [] }: { collaborationPeers?: On
                   <button
                     type="button"
                     className="accordion-entry-btn"
-                    onClick={() =>
+                    onClick={async () => {
+                      const canEdit = editor
+                        ? false
+                        : await acquireEntryLock(kind, entry.templateId, index);
                       selectTarget({
                         generation: currentGeneration.generationIndex,
                         kind,
                         id: entry.templateId,
                         entryIndex: index,
-                        mode: editor ? "viewing" : "editing",
-                      })
-                    }
+                        mode: canEdit ? "editing" : "viewing",
+                      });
+                    }}
                   >
                     <span className="accordion-entry-index">#{index + 1}</span>
                     <span className="accordion-entry-preview">{preview}</span>
@@ -303,4 +330,3 @@ export function LeftPanel({ collaborationPeers = [] }: { collaborationPeers?: On
     </aside>
   );
 }
-

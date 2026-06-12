@@ -26,7 +26,8 @@ function buildPatch(
   targetKind: "node" | "edge",
   generationIndex: number,
   entryId: string,
-  entry: NodeEntry | EdgeEntry
+  entry: NodeEntry | EdgeEntry,
+  entryIndex?: number
 ): SessionPatch {
   return {
     mutationId: createMutationId(),
@@ -36,6 +37,7 @@ function buildPatch(
     generationIndex,
     targetKind,
     entryId,
+    entryIndex,
     entry,
   };
 }
@@ -81,7 +83,8 @@ function applyFieldEntriesUpdate(
   kind: "node" | "edge",
   generationIndex: number,
   entryId: string,
-  fieldEntries: FieldEntry[]
+  fieldEntries: FieldEntry[],
+  entryIndex?: number
 ) {
   if (!state.session) return state;
 
@@ -100,7 +103,7 @@ function applyFieldEntriesUpdate(
     isConfirmed: fieldEntries.length > 0,
   } as NodeEntry | EdgeEntry;
 
-  const patch = buildPatch(session, kind, generationIndex, entryId, updated);
+  const patch = buildPatch(session, kind, generationIndex, entryId, updated, entryIndex);
   const nextSession = applySessionPatch(session, patch);
   if (!nextSession) return state;
 
@@ -122,6 +125,8 @@ type SessionStore = {
   appendEdgeFieldEntry: (generationIndex: number, edgeId: string, fieldEntry: FieldEntry) => void;
   setNodeFieldEntries: (generationIndex: number, nodeId: string, fieldEntries: FieldEntry[]) => void;
   setEdgeFieldEntries: (generationIndex: number, edgeId: string, fieldEntries: FieldEntry[]) => void;
+  updateNodeFieldEntry: (generationIndex: number, nodeId: string, entryIndex: number, fieldEntry: FieldEntry) => void;
+  updateEdgeFieldEntry: (generationIndex: number, edgeId: string, entryIndex: number, fieldEntry: FieldEntry) => void;
   updateEdgeText: (generationIndex: number, edgeId: string, text: string) => void;
 };
 
@@ -262,6 +267,30 @@ export const useSessionStore = create<SessionStore>((set) => ({
 
   setEdgeFieldEntries: (generationIndex, edgeId, fieldEntries) =>
     set((state) => applyFieldEntriesUpdate(state, "edge", generationIndex, edgeId, fieldEntries)),
+
+  updateNodeFieldEntry: (generationIndex, nodeId, entryIndex, fieldEntry) =>
+    set((state) => {
+      if (!state.session) return state;
+      const generation = state.session.generations.find((item) => item.generationIndex === generationIndex);
+      const current = generation?.nodes[nodeId];
+      if (!current?.fieldEntries[entryIndex]) return state;
+      const nextEntries = current.fieldEntries.map((entry, index) =>
+        index === entryIndex ? fieldEntry : entry
+      );
+      return applyFieldEntriesUpdate(state, "node", generationIndex, nodeId, nextEntries, entryIndex);
+    }),
+
+  updateEdgeFieldEntry: (generationIndex, edgeId, entryIndex, fieldEntry) =>
+    set((state) => {
+      if (!state.session) return state;
+      const generation = state.session.generations.find((item) => item.generationIndex === generationIndex);
+      const current = generation?.edges[edgeId];
+      if (!current?.fieldEntries[entryIndex]) return state;
+      const nextEntries = current.fieldEntries.map((entry, index) =>
+        index === entryIndex ? fieldEntry : entry
+      );
+      return applyFieldEntriesUpdate(state, "edge", generationIndex, edgeId, nextEntries, entryIndex);
+    }),
 
   updateEdgeText: (generationIndex, edgeId, text) =>
     set((state) => {
