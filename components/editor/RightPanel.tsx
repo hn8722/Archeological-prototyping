@@ -687,6 +687,64 @@ export function RightPanel({
   const filledAffectedEdges = getFilledRelatedItems(relatedModels.affectedEdges);
   const filledAffectingNodes = getFilledRelatedItems(relatedModels.affectingNodes);
   const filledAffectingEdges = getFilledRelatedItems(relatedModels.affectingEdges);
+  const imageCheckControl = shouldShowImageCheck ? (
+    <div className="intent-image-check">
+      <div className="intent-image-check-header">
+        <div>
+          <p className="intent-image-check-title">意図の画像確認</p>
+          <p className="intent-image-check-note">
+            入力した内容を画像化し、意図が反映されているか確認できます。
+          </p>
+        </div>
+        <button
+          type="button"
+          className={
+            canConfirm && !isGeneratingImage
+              ? `button-secondary intent-image-trigger ${shouldHighlightImageCheck ? "intent-image-trigger-ready" : ""}`
+              : "button-disabled"
+          }
+          onClick={handleGenerateIntentImage}
+          disabled={!canConfirm || isGeneratingImage || isReadOnlyEntry}
+        >
+          {isGeneratingImage ? "画像生成中..." : generatedImage ? "画像を再生成" : "画像で確認"}
+        </button>
+      </div>
+
+      {imageGenerationError && <p className="ai-assist-error">{imageGenerationError}</p>}
+
+      {generatedImage && (
+        <div className="intent-image-result">
+          <img src={generatedImage} alt="入力意図の確認画像" className="intent-image-preview" />
+          <div className="intent-image-actions">
+            <button
+              type="button"
+              className={imageReviewStatus === "ok" ? "button-primary" : "button-secondary"}
+              onClick={handleApproveGeneratedImage}
+              disabled={isReadOnlyEntry}
+            >
+              OK・反映する
+            </button>
+            <button
+              type="button"
+              className={imageReviewStatus === "insufficient" ? "button-primary" : "button-secondary"}
+              onClick={() => {
+                if (isReadOnlyEntry) return;
+                setImageReviewStatus("insufficient");
+              }}
+              disabled={isReadOnlyEntry}
+            >
+              不十分
+            </button>
+          </div>
+          {imageReviewStatus === "insufficient" && (
+            <p className="intent-image-feedback intent-image-feedback-warn">
+              まだ反映しません。テキスト入力をより具体的にしてから、画像を再生成してください。対象、場面、利用者、変化、制約を追加すると反映されやすくなります。
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  ) : null;
 
   return (
     <aside className="panel">
@@ -709,64 +767,6 @@ export function RightPanel({
               <div className="selected-intent-image">
                 <p className="selected-intent-image-title">確認済み画像</p>
                 <img src={confirmedIntentImage} alt="確認済みの入力意図画像" className="selected-intent-image-preview" />
-              </div>
-            )}
-            {shouldShowImageCheck && (
-              <div className="intent-image-check">
-                <div className="intent-image-check-header">
-                  <div>
-                    <p className="intent-image-check-title">意図の画像確認</p>
-                    <p className="intent-image-check-note">
-                      入力した内容を画像化し、意図が反映されているか確認できます。
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    className={
-                      canConfirm && !isGeneratingImage
-                        ? `button-secondary intent-image-trigger ${shouldHighlightImageCheck ? "intent-image-trigger-ready" : ""}`
-                        : "button-disabled"
-                    }
-                    onClick={handleGenerateIntentImage}
-                    disabled={!canConfirm || isGeneratingImage || isReadOnlyEntry}
-                  >
-                    {isGeneratingImage ? "画像生成中..." : generatedImage ? "画像を再生成" : "画像で確認"}
-                  </button>
-                </div>
-
-                {imageGenerationError && <p className="ai-assist-error">{imageGenerationError}</p>}
-
-                {generatedImage && (
-                  <div className="intent-image-result">
-                    <img src={generatedImage} alt="入力意図の確認画像" className="intent-image-preview" />
-                    <div className="intent-image-actions">
-                      <button
-                        type="button"
-                        className={imageReviewStatus === "ok" ? "button-primary" : "button-secondary"}
-                        onClick={handleApproveGeneratedImage}
-                        disabled={isReadOnlyEntry}
-                      >
-                        OK・反映する
-                      </button>
-                      <button
-                        type="button"
-                        className={imageReviewStatus === "insufficient" ? "button-primary" : "button-secondary"}
-                        onClick={() => {
-                          if (isReadOnlyEntry) return;
-                          setImageReviewStatus("insufficient");
-                        }}
-                        disabled={isReadOnlyEntry}
-                      >
-                        不十分
-                      </button>
-                    </div>
-                    {imageReviewStatus === "insufficient" && (
-                      <p className="intent-image-feedback intent-image-feedback-warn">
-                        まだ反映しません。テキスト入力をより具体的にしてから、画像を再生成してください。対象、場面、利用者、変化、制約を追加すると反映されやすくなります。
-                      </p>
-                    )}
-                  </div>
-                )}
               </div>
             )}
           </div>
@@ -843,7 +843,7 @@ export function RightPanel({
             <div className={`input-mode-panel ${inputMode === "text" ? "input-mode-panel-open" : "input-mode-panel-closed"}`}>
               {hasFieldSchema ? (
                 <div className="field-editor">
-                  {fieldDefs.map((def) => {
+                  {fieldDefs.map((def, index) => {
                     const value = editingFields[def.key] ?? "";
                     const selectOptions = def.dependsOn
                       ? def.optionsByValue?.[mergedEditingFields[def.dependsOn] ?? ""] ?? []
@@ -851,6 +851,10 @@ export function RightPanel({
                     const isSelectField = selectOptions.length > 0 || Boolean(def.dependsOn);
                     const isUxYearField =
                       selectedEntry.label === "日常の空間とユーザー体験" && def.key === "when";
+                    const shouldPlaceImageCheckHere =
+                      canUseImageConfirmation &&
+                      (def.key === "experience" ||
+                        (selectedEntry.label === "ペルソナ" && index === fieldDefs.length - 1));
                     return (
                       <div key={def.key} className="field-group">
                         <div className="field-label-row">
@@ -928,6 +932,7 @@ export function RightPanel({
                             rows={getTextareaRows(value)}
                           />
                         )}
+                        {shouldPlaceImageCheckHere && imageCheckControl}
                       </div>
                     );
                   })}

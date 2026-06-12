@@ -2,7 +2,7 @@
 
 import { use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Undo2, Pencil, PencilLine, Download } from "lucide-react";
+import { Undo2, Pencil, PencilLine, Download, X } from "lucide-react";
 import { useSessionStore } from "@/store/useSessionStore";
 import { FieldEntry, SessionModel } from "@/lib/types/ap";
 import { formatGenerationLabel } from "@/lib/utils/generationLabel";
@@ -222,6 +222,9 @@ export default function StoryPage({
   const [saveMessage, setSaveMessage] = useState("");
   const [storyModel, setStoryModel] = useState<string | null>(null);
   const [storyParams, setStoryParams] = useState<StoryParams>(DEFAULT_PARAMS);
+  const [isStoryReaderOpen, setIsStoryReaderOpen] = useState(false);
+  const [streamedStoryText, setStreamedStoryText] = useState("");
+  const [isStoryPlaybackDone, setIsStoryPlaybackDone] = useState(true);
 
   useEffect(() => {
     if (sessionFromStore?.id === id) {
@@ -259,6 +262,24 @@ export default function StoryPage({
       setExpandedPersonaKey(null);
     }
   }, [expandedPersonaKey, personaCandidates]);
+
+  useEffect(() => {
+    if (!isStoryReaderOpen || !story) return;
+
+    setStreamedStoryText("");
+    setIsStoryPlaybackDone(false);
+    let index = 0;
+    const timer = window.setInterval(() => {
+      index += 2;
+      setStreamedStoryText(story.slice(0, index));
+      if (index >= story.length) {
+        window.clearInterval(timer);
+        setIsStoryPlaybackDone(true);
+      }
+    }, 28);
+
+    return () => window.clearInterval(timer);
+  }, [isStoryReaderOpen, story]);
 
   const selectedPersonas = personaCandidates.filter((persona) => selectedPersonaKeys.has(persona.key));
 
@@ -303,6 +324,8 @@ export default function StoryPage({
     setIsStorySaved(false);
     setSaveMessage("");
     setStoryModel(null);
+    setIsStoryReaderOpen(false);
+    setStreamedStoryText("");
 
     try {
       await saveSessionBeforeStory();
@@ -347,6 +370,8 @@ export default function StoryPage({
     setIsStorySaved(false);
     setSaveMessage("");
     setStoryModel(null);
+    setIsStoryReaderOpen(false);
+    setStreamedStoryText("");
 
     try {
       const response = await fetch(`/api/sessions/${id}/story`, {
@@ -374,6 +399,7 @@ export default function StoryPage({
       setStory(data.story);
       setGenerationStories(data.generationStories ?? []);
       setStoryModel(data.model ?? null);
+      setIsStoryReaderOpen(true);
       setIsStorySaved(false);
       setSaveMessage("生成結果はまだアプリに保存されていません。残す場合は保存してください。");
       setPreviews([]);
@@ -503,6 +529,8 @@ export default function StoryPage({
     setPreviews([]);
     setStory("");
     setGenerationStories([]);
+    setIsStoryReaderOpen(false);
+    setStreamedStoryText("");
   };
 
   const setAllPersonas = (checked: boolean) => {
@@ -510,6 +538,8 @@ export default function StoryPage({
     setPreviews([]);
     setStory("");
     setGenerationStories([]);
+    setIsStoryReaderOpen(false);
+    setStreamedStoryText("");
   };
 
   const renderPersonaSelector = () => (
@@ -738,6 +768,14 @@ export default function StoryPage({
         <div className="story-footer-actions">
           <button
             type="button"
+            className="button-secondary"
+            onClick={() => setIsStoryReaderOpen(true)}
+          >
+            <PencilLine size={15} />
+            縦書きで読む
+          </button>
+          <button
+            type="button"
             className="button-primary"
             onClick={handleSaveStoryToApp}
             disabled={isSavingStory || isStorySaved}
@@ -766,6 +804,32 @@ export default function StoryPage({
 
       {saveMessage && <p className="page-description">{saveMessage}</p>}
       {errorMessage && <p className="page-description" style={{ color: "#d92d20" }}>{errorMessage}</p>}
+
+      {isStoryReaderOpen && story && (
+        <div className="story-reader-overlay" role="dialog" aria-modal="true" aria-label="生成小説の縦書き表示">
+          <div className="story-reader-modal">
+            <div className="story-reader-toolbar">
+              <span className="story-reader-status">
+                {isStoryPlaybackDone ? "再生完了" : "再生中..."}
+              </span>
+              <button
+                type="button"
+                className="story-reader-close"
+                onClick={() => setIsStoryReaderOpen(false)}
+                aria-label="閉じる"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="story-reader-paper">
+              <p className="story-reader-text">
+                {streamedStoryText}
+                {!isStoryPlaybackDone && <span className="story-reader-caret" aria-hidden="true" />}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="story-footer-actions">
         <Link href={`/session/${id}`} className="button-secondary">
