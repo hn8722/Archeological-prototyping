@@ -1756,11 +1756,86 @@ a {
 
 .graph-panel {
   min-height: 760px;
+  position: relative;
 }
 
 .ap-map-wrapper {
   overflow: visible;
   padding-bottom: 8px;
+}
+
+.ap-generation-confirm-popover {
+  position: absolute;
+  right: 18px;
+  top: 54px;
+  z-index: 60;
+  width: min(320px, calc(100% - 36px));
+  padding: 14px;
+  border: 1px solid #d0d5dd;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.18);
+}
+
+.ap-generation-confirm-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ap-generation-confirm-title,
+.ap-generation-confirm-note {
+  margin: 0;
+}
+
+.ap-generation-confirm-title {
+  color: #101828;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.ap-generation-confirm-note {
+  color: #667085;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ap-generation-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.ap-generation-confirm-cancel,
+.ap-generation-confirm-ok {
+  min-height: 30px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.ap-generation-confirm-cancel {
+  border: 1px solid #d0d5dd;
+  background: #fff;
+  color: #344054;
+}
+
+.ap-generation-confirm-ok {
+  border: 1px solid #111827;
+  background: #111827;
+  color: #fff;
+}
+
+.ap-generation-confirm-cancel:hover {
+  background: #f8fafc;
+}
+
+.ap-generation-confirm-ok:hover {
+  background: #000;
 }
 
 .ap-map-canvas {

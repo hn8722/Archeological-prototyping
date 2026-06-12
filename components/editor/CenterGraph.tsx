@@ -160,6 +160,7 @@ export function CenterGraph({ collaborationPeers = [] }: { collaborationPeers?: 
   const selectTarget = useSessionStore((state) => state.selectTarget);
   const ensureGeneration = useSessionStore((state) => state.ensureGeneration);
   const [activeMapGeneration, setActiveMapGeneration] = useState<number | null>(null);
+  const [pendingGenerationAdd, setPendingGenerationAdd] = useState<"past" | "future" | null>(null);
 
   useEffect(() => {
     if (!session?.generations.length) return;
@@ -415,21 +416,27 @@ export function CenterGraph({ collaborationPeers = [] }: { collaborationPeers?: 
   };
 
   const addFutureGeneration = () => {
-    const confirmed = window.confirm("未来の世代を1つ追加しますか？");
-    if (!confirmed) return;
-
-    const maxIndex = Math.max(...graphModel.allGenerationIndexes);
-    ensureGeneration(maxIndex + 1);
-    setActiveMapGeneration(maxIndex + 1);
+    setPendingGenerationAdd("future");
   };
 
   const addPastGeneration = () => {
-    const confirmed = window.confirm("過去の世代を1つ追加しますか？");
-    if (!confirmed) return;
+    setPendingGenerationAdd("past");
+  };
 
-    const minIndex = Math.min(...graphModel.allGenerationIndexes);
-    ensureGeneration(minIndex - 1);
-    setActiveMapGeneration(minIndex - 1);
+  const confirmGenerationAdd = () => {
+    if (!pendingGenerationAdd) return;
+
+    if (pendingGenerationAdd === "future") {
+      const maxIndex = Math.max(...graphModel.allGenerationIndexes);
+      ensureGeneration(maxIndex + 1);
+      setActiveMapGeneration(maxIndex + 1);
+    } else {
+      const minIndex = Math.min(...graphModel.allGenerationIndexes);
+      ensureGeneration(minIndex - 1);
+      setActiveMapGeneration(minIndex - 1);
+    }
+
+    setPendingGenerationAdd(null);
   };
 
   const getTargetPeers = (
@@ -461,6 +468,34 @@ export function CenterGraph({ collaborationPeers = [] }: { collaborationPeers?: 
   return (
     <section className="panel graph-panel">
       <h2 className="panel-title">APマップ</h2>
+      {pendingGenerationAdd && (
+        <div className="ap-generation-confirm-popover" role="dialog" aria-modal="false">
+          <div className="ap-generation-confirm-content">
+            <p className="ap-generation-confirm-title">
+              {pendingGenerationAdd === "future" ? "未来の世代を追加しますか？" : "過去の世代を追加しますか？"}
+            </p>
+            <p className="ap-generation-confirm-note">
+              AP図に新しい世代を1つ追加します。
+            </p>
+          </div>
+          <div className="ap-generation-confirm-actions">
+            <button
+              type="button"
+              className="ap-generation-confirm-cancel"
+              onClick={() => setPendingGenerationAdd(null)}
+            >
+              キャンセル
+            </button>
+            <button
+              type="button"
+              className="ap-generation-confirm-ok"
+              onClick={confirmGenerationAdd}
+            >
+              追加
+            </button>
+          </div>
+        </div>
+      )}
       <div className="ap-map-wrapper">
         <div
           className="ap-map-canvas"
