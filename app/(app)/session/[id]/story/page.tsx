@@ -206,6 +206,7 @@ export default function StoryPage({
 }) {
   const { id } = use(params);
   const sessionFromStore = useSessionStore((state) => state.session);
+  const setStoreSession = useSessionStore((state) => state.setSession);
   const [session, setSession] = useState<SessionModel | null>(sessionFromStore);
   const [story, setStory] = useState("");
   const [generationStories, setGenerationStories] = useState<GenerationStory[]>([]);
@@ -294,7 +295,25 @@ export default function StoryPage({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session }),
     });
-    if (!saveResponse.ok) throw new Error("Failed to save session before generating story");
+    const data = (await saveResponse.json().catch(() => ({}))) as {
+      error?: string;
+      session?: SessionModel;
+    };
+
+    if (saveResponse.status === 409 && data.session) {
+      setSession(data.session);
+      setStoreSession(data.session);
+      return;
+    }
+
+    if (!saveResponse.ok) {
+      throw new Error(data.error || "小説生成前のセッション保存に失敗しました。");
+    }
+
+    if (data.session) {
+      setSession(data.session);
+      setStoreSession(data.session);
+    }
   };
 
   const buildSelectedPersonaPayload = () =>
