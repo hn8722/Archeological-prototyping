@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 import { useSessionStore } from "@/store/useSessionStore";
 import { SessionPatch } from "@/lib/types/ap";
@@ -10,7 +10,9 @@ type RealtimePayload = {
   patch: SessionPatch;
 };
 
-export function useSessionRealtime(sessionId: string) {
+export type RealtimeConnectionState = "idle" | "connecting" | "connected" | "reconnecting" | "error";
+
+export function useSessionRealtime(sessionId: string, enabled = true): RealtimeConnectionState {
   const lastMutation = useSessionStore((state) => state.lastMutation);
   const applyRemotePatch = useSessionStore((state) => state.applyRemotePatch);
 
@@ -21,8 +23,16 @@ export function useSessionRealtime(sessionId: string) {
   const supabase = useRef(createBrowserSupabaseClient());
   const channelRef = useRef<ReturnType<typeof supabase.current.channel> | null>(null);
   const lastBroadcastRef = useRef<string | null>(null);
+  const [connectionState, setConnectionState] = useState<RealtimeConnectionState>("idle");
 
   useEffect(() => {
+    if (!enabled) {
+      setConnectionState("idle");
+      return;
+    }
+
+    setConnectionState("connecting");
+    lastBroadcastRef.current = null;
     const channel = supabase.current.channel(`session:${sessionId}`, {
       config: { broadcast: { self: false } },
     });
@@ -38,17 +48,21 @@ export function useSessionRealtime(sessionId: string) {
       }
     );
 
-    channel.subscribe();
+    channel.subscribe((status) => {
+      if (status === "SUBSCRIBED") setConnectionState("connected");
+      else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") setConnectionState("error");
+      else if (status === "CLOSED") setConnectionState("reconnecting");
+    });
     channelRef.current = channel;
 
     return () => {
       void supabase.current.removeChannel(channel);
       channelRef.current = null;
     };
-  }, [applyRemotePatch, sessionId]);
+  }, [applyRemotePatch, enabled, sessionId]);
 
   useEffect(() => {
-    if (!lastMutation || !channelRef.current) return;
+    if (!enabled || !lastMutation || !channelRef.current) return;
 
     const json = JSON.stringify(lastMutation);
     if (json === lastBroadcastRef.current) return;
@@ -62,5 +76,7 @@ export function useSessionRealtime(sessionId: string) {
         patch: lastMutation,
       } satisfies RealtimePayload,
     });
-  }, [lastMutation]);
+  }, [enabled, lastMutation]);
+
+  return connectionState;
 }

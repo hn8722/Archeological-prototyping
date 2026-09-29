@@ -58,19 +58,37 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const [isGroupSession, setIsGroupSession] = useState(false);
   const [displayNameInput, setDisplayNameInput] = useState("");
   const [collaborationName, setCollaborationName] = useState("");
+  const [displayNameError, setDisplayNameError] = useState<string | null>(null);
+  const [isSavingDisplayName, setIsSavingDisplayName] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
   const hasHydratedRef = useRef(false);
   const restoredLocalSessionRef = useRef<SessionModel | null>(null);
+  const persistedMutationIdRef = useRef<string | null>(null);
+  const persistingMutationIdRef = useRef<string | null>(null);
+  const syncingRef = useRef(false);
+  const toastTimeoutRef = useRef<number | null>(null);
 
-  useSessionRealtime(sessionId);
-  const { count: onlineCount, peers } = useOnlineMembers(
+  const realtimeConnectionState = useSessionRealtime(sessionId, isGroupSession);
+  const { count: onlineCount, peers, connectionState: presenceConnectionState } = useOnlineMembers(
     sessionId,
     selectedTarget,
     collaborationName,
     isGroupSession && Boolean(collaborationName.trim())
   );
 
+  const showToast = useCallback((message: string) => {
+    if (toastTimeoutRef.current !== null) window.clearTimeout(toastTimeoutRef.current);
+    setToastMessage(message);
+    toastTimeoutRef.current = window.setTimeout(() => {
+      setToastMessage(null);
+      toastTimeoutRef.current = null;
+    }, 3500);
+  }, []);
+
   const persistMutation = useCallback(async (patch: SessionPatch) => {
+    if (persistingMutationIdRef.current === patch.mutationId) return;
+    persistingMutationIdRef.current = patch.mutationId;
     setSaveState("saving");
     try {
       const response = await fetch(`/api/sessions/${patch.sessionId}`, {
@@ -81,16 +99,28 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
 
       if (response.status === 409) {
         const data = (await response.json()) as { session?: SessionModel };
-        if (data.session) setSession(data.session);
+        const currentSession = useSessionStore.getState().session;
+        if (data.session && (!currentSession || currentSession.revision <= data.session.revision)) {
+          setSession(data.session);
+        }
+        persistedMutationIdRef.current = patch.mutationId;
         setSaveState("conflict");
         return;
       }
 
-      if (!response.ok) throw new Error("Failed to save session");
+      const data = (await response.json().catch(() => ({}))) as { session?: SessionModel; error?: string };
+      if (!response.ok) throw new Error(data.error ?? "セッションの保存に失敗しました。");
+      const currentSession = useSessionStore.getState().session;
+      if (data.session && (!currentSession || currentSession.revision <= data.session.revision)) {
+        setSession(data.session);
+      }
+      persistedMutationIdRef.current = patch.mutationId;
       setSaveState("saved");
     } catch (error) {
       console.error(error);
       setSaveState("error");
+    } finally {
+      persistingMutationIdRef.current = null;
     }
   }, [setSession]);
 
@@ -170,6 +200,26 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
     };
   }, [initializeSession, persistFullSession, sessionId]);
 
+  const syncWithServer = useCallback(async () => {
+    if (syncingRef.current) return;
+    const currentMutation = useSessionStore.getState().lastMutation;
+    if (currentMutation && persistedMutationIdRef.current !== currentMutation.mutationId) return;
+
+    syncingRef.current = true;
+    try {
+      const response = await fetch(`/api/sessions/${sessionId}`, { cache: "no-store" });
+      const data = (await response.json().catch(() => ({}))) as { session?: SessionModel };
+      const currentSession = useSessionStore.getState().session;
+      if (response.ok && data.session && (!currentSession || data.session.revision >= currentSession.revision)) {
+        setSession(data.session);
+      }
+    } catch (error) {
+      console.error("Failed to reconcile group session", error);
+    } finally {
+      syncingRef.current = false;
+    }
+  }, [sessionId, setSession]);
+
   useEffect(() => {
     if (!session || !hasHydratedRef.current) return;
     writeCachedSession(session);
@@ -178,12 +228,33 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     if (!lastMutation || !session || !hasHydratedRef.current || isLoading) return;
 
+    if (
+      persistedMutationIdRef.current === lastMutation.mutationId ||
+      persistingMutationIdRef.current === lastMutation.mutationId
+    ) return;
+
     const timer = window.setTimeout(() => {
       void persistMutation(lastMutation);
     }, 700);
 
     return () => window.clearTimeout(timer);
   }, [isLoading, lastMutation, persistMutation, session]);
+
+  useEffect(() => {
+    if (!isGroupSession || isLoading) return;
+
+    const handleFocus = () => void syncWithServer();
+    const interval = window.setInterval(() => void syncWithServer(), 8_000);
+    window.addEventListener("focus", handleFocus);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, [isGroupSession, isLoading, syncWithServer]);
+
+  useEffect(() => () => {
+    if (toastTimeoutRef.current !== null) window.clearTimeout(toastTimeoutRef.current);
+  }, []);
 
   const saveStatusLabel =
     loadFailed ? "読み込み失敗（オフラインモード）"
@@ -193,11 +264,37 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
     : saveState === "error" ? "保存失敗 — サーバーに接続できません"
     : "";
 
-  const handleDisplayNameSubmit = () => {
+  const handleDisplayNameSubmit = async () => {
     const nextName = displayNameInput.trim() || "参加者";
-    window.localStorage.setItem(`ap-group-display-name:${sessionId}`, nextName);
-    setCollaborationName(nextName);
+    setIsSavingDisplayName(true);
+    setDisplayNameError(null);
+    try {
+      const response = await fetch(`/api/sessions/${sessionId}/display-name`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ displayName: nextName }),
+      });
+      const data = (await response.json().catch(() => ({}))) as { displayName?: string; error?: string };
+      if (!response.ok || !data.displayName) {
+        throw new Error(data.error ?? "表示名を保存できませんでした。");
+      }
+      window.localStorage.setItem(`ap-group-display-name:${sessionId}`, data.displayName);
+      setCollaborationName(data.displayName);
+      showToast("表示名を設定しました。");
+    } catch (error) {
+      console.error(error);
+      setDisplayNameError(error instanceof Error ? error.message : "表示名を保存できませんでした。");
+    } finally {
+      setIsSavingDisplayName(false);
+    }
   };
+
+  const collaborationStatus =
+    presenceConnectionState === "connected" && realtimeConnectionState === "connected"
+      ? null
+      : presenceConnectionState === "error" || realtimeConnectionState === "error"
+        ? "共同編集に接続できません。再接続を試みています。"
+        : "共同編集に接続中です…";
 
   if (isLoading) {
     return <div className="page-container">Loading session...</div>;
@@ -215,6 +312,18 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
             <span className="online-badge">
               {onlineCount} online
             </span>
+          )}
+          {isGroupSession && peers.length > 0 && (
+            <span
+              className="collaboration-roster"
+              title={peers.map((peer) => peer.displayName).join("、")}
+            >
+              参加中: {peers.slice(0, 3).map((peer) => peer.displayName).join("、")}
+              {peers.length > 3 ? ` ほか${peers.length - 3}人` : ""}
+            </span>
+          )}
+          {isGroupSession && collaborationStatus && (
+            <span className="collaboration-status" role="status">{collaborationStatus}</span>
           )}
           {saveStatusLabel && (
             <span className={`save-status ${loadFailed ? "save-status-error" : `save-status-${saveState}`}`}>
@@ -234,7 +343,12 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
         </div>
         <div className="workspace-bottom">
           <LeftPanel sessionId={sessionId} collaborationPeers={peers} />
-          <RightPanel sessionId={sessionId} collaborationPeers={peers} authorName={collaborationName} />
+          <RightPanel
+            sessionId={sessionId}
+            collaborationPeers={peers}
+            authorName={collaborationName}
+            onEntryCommitted={(action) => showToast(action === "added" ? "追加しました。保存中です…" : "更新しました。保存中です…")}
+          />
         </div>
       </div>
 
@@ -253,18 +367,20 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
                 value={displayNameInput}
                 onChange={(event) => setDisplayNameInput(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter") handleDisplayNameSubmit();
+                  if (event.key === "Enter" && !isSavingDisplayName) void handleDisplayNameSubmit();
                 }}
                 placeholder="例：佐藤、A班 山田"
                 autoFocus
               />
-              <button type="button" className="button-primary" onClick={handleDisplayNameSubmit}>
-                参加する
+              <button type="button" className="button-primary" onClick={() => void handleDisplayNameSubmit()} disabled={isSavingDisplayName}>
+                {isSavingDisplayName ? "保存中…" : "参加する"}
               </button>
             </div>
+            {displayNameError && <p className="invite-modal-error">{displayNameError}</p>}
           </div>
         </div>
       )}
+      {toastMessage && <div className="workspace-toast" role="status">{toastMessage}</div>}
     </div>
   );
 }

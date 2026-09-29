@@ -30,6 +30,7 @@
     "build": "next build",
     "start": "next start",
     "prisma:generate": "prisma generate",
-    "backup:sessions": "node scripts/backup-sessions.mjs"
+    "backup:sessions": "node scripts/backup-sessions.mjs",
+    "backup:postgres": "node scripts/backup-postgres-sessions.mjs"
   }
 }

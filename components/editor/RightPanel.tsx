@@ -156,10 +156,12 @@ export function RightPanel({
   sessionId,
   collaborationPeers = [],
   authorName = "",
+  onEntryCommitted,
 }: {
   sessionId: string;
   collaborationPeers?: OnlineMember[];
   authorName?: string;
+  onEntryCommitted?: (action: "added" | "updated") => void;
 }) {
   const session = useSessionStore((state) => state.session);
   const selectedTarget = useSessionStore((state) => state.selectedTarget);
@@ -538,6 +540,7 @@ export function RightPanel({
 
     if (!hasFieldSchema) {
       updateEdgeText(selectedTarget.generation, selectedTarget.id, freeText);
+      onEntryCommitted?.("updated");
       return;
     }
 
@@ -556,6 +559,7 @@ export function RightPanel({
       } else {
         appendEdgeFieldEntry(selectedTarget.generation, selectedTarget.id, entryWithAuthor);
       }
+      onEntryCommitted?.("added");
     } else {
       const previousEntry = currentEntries[entryIndex] ?? {};
       const updatedEntry: FieldEntry = {
@@ -570,6 +574,7 @@ export function RightPanel({
       } else {
         updateEdgeFieldEntry(selectedTarget.generation, selectedTarget.id, entryIndex, updatedEntry);
       }
+      onEntryCommitted?.("updated");
     }
 
     // 追加/更新後は新規追加モードにリセット

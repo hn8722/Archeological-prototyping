@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 type GroupSession = {
@@ -18,6 +18,7 @@ export function GroupTab() {
   const router = useRouter();
   const [sessions, setSessions] = useState<GroupSession[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // 新規グループ作成
   const [isCreating, setIsCreating] = useState(false);
@@ -31,13 +32,30 @@ export function GroupTab() {
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteSuccess, setInviteSuccess] = useState(false);
 
-  useEffect(() => {
-    fetch("/api/group/sessions")
-      .then((r) => r.json())
-      .then((data: { sessions: GroupSession[] }) => setSessions(data.sessions))
-      .catch(console.error)
-      .finally(() => setIsLoading(false));
+  const loadSessions = useCallback(async () => {
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const response = await fetch("/api/group/sessions", { cache: "no-store" });
+      const data = (await response.json().catch(() => ({}))) as {
+        sessions?: GroupSession[];
+        error?: string;
+      };
+      if (!response.ok) throw new Error(data.error ?? "グループ一覧の取得に失敗しました。");
+      if (!Array.isArray(data.sessions)) throw new Error("グループ一覧の形式が不正です。");
+      setSessions(data.sessions);
+    } catch (error) {
+      console.error(error);
+      setSessions([]);
+      setLoadError(error instanceof Error ? error.message : "グループ一覧の取得に失敗しました。");
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void loadSessions();
+  }, [loadSessions]);
 
   const handleCreateGroup = async () => {
     setIsCreating(true);
@@ -47,12 +65,17 @@ export function GroupTab() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: newGroupName.trim() || undefined }),
       });
-      if (!response.ok) throw new Error("Failed to create group");
-      const data = (await response.json()) as { session: { id: string } };
+      const data = (await response.json().catch(() => ({}))) as {
+        session?: { id?: string };
+        error?: string;
+      };
+      if (!response.ok || !data.session?.id) {
+        throw new Error(data.error ?? "グループの作成に失敗しました。");
+      }
       router.push(`/session/${data.session.id}`);
     } catch (error) {
       console.error(error);
-      alert("グループの作成に失敗しました。");
+      alert(error instanceof Error ? error.message : "グループの作成に失敗しました。");
       setIsCreating(false);
     }
   };
@@ -82,12 +105,13 @@ export function GroupTab() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId: inviteUserId.trim() }),
       });
-      if (!response.ok) throw new Error("Failed to invite");
+      const data = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) throw new Error(data.error ?? "招待に失敗しました。");
       setInviteSuccess(true);
       setInviteUserId("");
     } catch (error) {
       console.error(error);
-      setInviteError("招待に失敗しました。ユーザーIDを確認してください。");
+      setInviteError(error instanceof Error ? error.message : "招待に失敗しました。");
     } finally {
       setIsInviting(false);
     }
@@ -137,6 +161,15 @@ export function GroupTab() {
         )}
       </div>
 
+      {loadError && (
+        <div className="group-load-error" role="alert">
+          <span>{loadError}</span>
+          <button type="button" className="button-secondary" onClick={() => void loadSessions()}>
+            再読み込み
+          </button>
+        </div>
+      )}
+
       {/* グループ一覧 */}
       {sessions.length === 0 ? (
         <p className="home-placeholder">
@@ -171,10 +204,16 @@ export function GroupTab() {
       {/* 招待モーダル */}
       {memberModal && (
         <div className="modal-overlay" onClick={closeMemberModal}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+          <div
+            className="modal-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="invite-modal-title"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="modal-header">
-              <h2 className="modal-title">メンバーを招待</h2>
-              <button className="modal-close" onClick={closeMemberModal}>✕</button>
+              <h2 id="invite-modal-title" className="modal-title">メンバーを招待</h2>
+              <button type="button" className="modal-close" onClick={closeMemberModal} aria-label="閉じる">✕</button>
             </div>
             <p className="invite-modal-desc">
               「{memberModal.sessionName}」に招待するユーザーIDを入力してください。
@@ -185,7 +224,7 @@ export function GroupTab() {
                 value={inviteUserId}
                 onChange={(e) => setInviteUserId(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") void handleInvite(); }}
-                placeholder="ユーザーID"
+                placeholder="ユーザーIDまたはメールアドレス"
                 disabled={isInviting}
                 autoFocus
               />

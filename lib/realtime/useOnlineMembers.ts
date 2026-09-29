@@ -13,6 +13,8 @@ export type OnlineMember = {
   updatedAt: number;
 };
 
+export type PresenceConnectionState = "idle" | "connecting" | "connected" | "reconnecting" | "error";
+
 type PresencePayload = {
   sessionId: string;
   displayName?: string;
@@ -50,8 +52,9 @@ export function useOnlineMembers(
   selectedTarget: SelectedTarget = null,
   displayName = "参加者",
   enabled = true
-): { count: number; members: OnlineMember[]; peers: OnlineMember[] } {
+): { count: number; members: OnlineMember[]; peers: OnlineMember[]; connectionState: PresenceConnectionState } {
   const [members, setMembers] = useState<OnlineMember[]>([]);
+  const [connectionState, setConnectionState] = useState<PresenceConnectionState>("idle");
   const supabase = useRef(createBrowserSupabaseClient());
   const channelRef = useRef<ReturnType<typeof supabase.current.channel> | null>(null);
   const presenceKeyRef = useRef<string>(
@@ -63,9 +66,11 @@ export function useOnlineMembers(
   useEffect(() => {
     if (!enabled) {
       setMembers([]);
+      setConnectionState("idle");
       return;
     }
 
+    setConnectionState("connecting");
     const channel = supabase.current.channel(`presence:${sessionId}`, {
       config: { presence: { key: presenceKeyRef.current } },
     });
@@ -92,6 +97,7 @@ export function useOnlineMembers(
 
     channel.subscribe(async (status) => {
       if (status === "SUBSCRIBED") {
+        setConnectionState("connected");
         await channel.track({
           sessionId,
           displayName,
@@ -100,6 +106,10 @@ export function useOnlineMembers(
           joinedAt: joinedAtRef.current,
           updatedAt: Date.now(),
         } satisfies PresencePayload);
+      } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+        setConnectionState("error");
+      } else if (status === "CLOSED") {
+        setConnectionState("reconnecting");
       }
     });
 
@@ -130,5 +140,6 @@ export function useOnlineMembers(
     count: members.length || 1,
     members,
     peers,
+    connectionState,
   };
 }

@@ -55,16 +55,18 @@ export async function createSessionRecord(
     session = buildInitialSession(id, name);
   }
 
-  await prisma.$executeRaw(Prisma.sql`
-    INSERT INTO "Session" ("id", "name", "snapshot", "isGroup", "ownerId")
-    VALUES (${session.id}, ${session.name}, ${JSON.stringify(session)}, ${isGroup}, ${ownerId ?? null})
-  `);
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw(Prisma.sql`
+      INSERT INTO "Session" ("id", "name", "snapshot", "isGroup", "ownerId")
+      VALUES (${session.id}, ${session.name}, ${JSON.stringify(session)}, ${isGroup}, ${ownerId ?? null})
+    `);
 
-  if (ownerId && isGroup) {
-    await prisma.groupMember.create({
-      data: { sessionId: session.id, userId: ownerId, role: "owner" },
-    });
-  }
+    if (ownerId && isGroup) {
+      await tx.groupMember.create({
+        data: { sessionId: session.id, userId: ownerId, role: "owner" },
+      });
+    }
+  });
 
   return session;
 }
@@ -610,6 +612,40 @@ export async function isGroupSessionMember(
   return Number(rows[0]?.count ?? 0) > 0;
 }
 
+export async function getGroupMemberDisplayName(
+  sessionId: string,
+  userId: string,
+  userEmail?: string | null
+) {
+  const lookupValues = uniqueIdentityValues(userId, userEmail);
+  const rows = await prisma.$queryRaw<Array<{ displayName: string | null }>>(Prisma.sql`
+    SELECT "displayName"
+    FROM "GroupMember"
+    WHERE "sessionId" = ${sessionId} AND "userId" IN (${Prisma.join(lookupValues)})
+    ORDER BY "joinedAt" ASC
+    LIMIT 1
+  `);
+  return rows[0]?.displayName?.trim() || null;
+}
+
+export async function setGroupMemberDisplayName(
+  sessionId: string,
+  userId: string,
+  displayName: string,
+  userEmail?: string | null
+) {
+  const lookupValues = uniqueIdentityValues(userId, userEmail);
+  const normalizedName = displayName.trim().slice(0, 80);
+  if (!normalizedName) return false;
+
+  const result = await prisma.$executeRaw(Prisma.sql`
+    UPDATE "GroupMember"
+    SET "displayName" = ${normalizedName}
+    WHERE "sessionId" = ${sessionId} AND "userId" IN (${Prisma.join(lookupValues)})
+  `);
+  return result > 0;
+}
+
 function uniqueIdentityValues(...values: Array<string | null | undefined>) {
   return [...new Set(values.map((value) => value?.trim()).filter(Boolean) as string[])];
 }
@@ -848,6 +884,17 @@ async function canActorEditExistingEntry(
 }
 
 export async function applySessionPatchRecord(sessionId: string, patch: SessionPatch, actor?: EditActor) {
+  const alreadyApplied = await prisma.$queryRaw<Array<{ revision: number }>>(Prisma.sql`
+    SELECT "revision"
+    FROM "SessionMutation"
+    WHERE "sessionId" = ${sessionId} AND "mutationId" = ${patch.mutationId}
+    LIMIT 1
+  `);
+  if (alreadyApplied[0]) {
+    const currentSession = (await getSessionRecord(sessionId)) ?? buildInitialSession(sessionId);
+    return { ok: true as const, session: normalizeSession(currentSession), duplicate: true as const };
+  }
+
   if (actor && !(await canActorEditExistingEntry(sessionId, patch, actor))) {
     const currentSession = (await getSessionRecord(sessionId)) ?? buildInitialSession(sessionId);
     const normalizedCurrent = normalizeSession(currentSession);
@@ -864,13 +911,30 @@ export async function applySessionPatchRecord(sessionId: string, patch: SessionP
     const currentSession = rows[0] ? deserializeSession(rows[0].snapshot) : buildInitialSession(sessionId);
     const normalizedCurrent = normalizeSession(currentSession);
 
+    const existingMutation = await tx.$queryRaw<Array<{ revision: number }>>(Prisma.sql`
+      SELECT "revision"
+      FROM "SessionMutation"
+      WHERE "sessionId" = ${sessionId} AND "mutationId" = ${patch.mutationId}
+      LIMIT 1
+    `);
+    if (existingMutation[0]) {
+      return { ok: true as const, session: normalizedCurrent, duplicate: true as const };
+    }
+
+    const recordMutation = async (revision: number) => {
+      await tx.$executeRaw(Prisma.sql`
+        INSERT INTO "SessionMutation" ("id", "sessionId", "mutationId", "revision")
+        VALUES (${randomUUID()}, ${sessionId}, ${patch.mutationId}, ${revision})
+      `);
+    };
+
     if (patch.targetKind === "nodeFieldEntryAppend" || patch.targetKind === "edgeFieldEntryAppend") {
       const entryWithAuthor =
         actor && typeof patch.entry === "object" && patch.entry !== null
           ? {
               ...(patch.entry as FieldEntry),
-              __authorId: (patch.entry as FieldEntry).__authorId || actor.id,
-              __authorName: (patch.entry as FieldEntry).__authorName || actor.label || "参加者",
+              __authorId: actor.id,
+              __authorName: actor.label || "参加者",
               __createdAt: (patch.entry as FieldEntry).__createdAt || new Date().toISOString(),
             }
           : patch.entry;
@@ -897,6 +961,7 @@ export async function applySessionPatchRecord(sessionId: string, patch: SessionP
           snapshot: JSON.stringify(nextSession),
         },
       });
+      await recordMutation(nextSession.revision);
       return { ok: true as const, session: deserializeSession(saved.snapshot) };
     }
 
@@ -921,6 +986,7 @@ export async function applySessionPatchRecord(sessionId: string, patch: SessionP
         snapshot: JSON.stringify(nextSession),
       },
     });
+    await recordMutation(nextSession.revision);
     return { ok: true as const, session: deserializeSession(saved.snapshot) };
   });
 }

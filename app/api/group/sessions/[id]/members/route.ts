@@ -18,13 +18,14 @@ export async function POST(
     if (!access.allowed || !access.info?.isGroup) {
       return NextResponse.json({ error: "このグループを管理する権限がありません。" }, { status: 403 });
     }
-    const body = (await request.json()) as { userId: string; role?: string };
+    const body = (await request.json().catch(() => ({}))) as { userId?: unknown };
+    const userId = typeof body.userId === "string" ? body.userId.trim() : "";
 
-    if (!body.userId) {
-      return NextResponse.json({ error: "userId が必要です。" }, { status: 400 });
+    if (!userId || userId.length > 320) {
+      return NextResponse.json({ error: "招待先のユーザーIDまたはメールアドレスが不正です。" }, { status: 400 });
     }
 
-    await addGroupMember(id, body.userId, body.role ?? "member");
+    await addGroupMember(id, userId, "member");
     return NextResponse.json({ ok: true });
   } catch (error) {
     console.error("Failed to add member", error);
@@ -48,13 +49,14 @@ export async function DELETE(
     if (!access.allowed || !access.info?.isGroup) {
       return NextResponse.json({ error: "このグループを管理する権限がありません。" }, { status: 403 });
     }
-    const body = (await request.json()) as { userId: string };
+    const body = (await request.json().catch(() => ({}))) as { userId?: unknown };
+    const userId = typeof body.userId === "string" ? body.userId.trim() : "";
 
-    if (!body.userId) {
-      return NextResponse.json({ error: "userId が必要です。" }, { status: 400 });
+    if (!userId || userId.length > 320) {
+      return NextResponse.json({ error: "削除するユーザーIDまたはメールアドレスが不正です。" }, { status: 400 });
     }
 
-    await removeGroupMember(id, body.userId);
+    await removeGroupMember(id, userId);
     return NextResponse.json({ ok: true });
   } catch (error) {
     console.error("Failed to remove member", error);

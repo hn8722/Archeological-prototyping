@@ -6,6 +6,7 @@ import {
   canReadSession,
   canWriteSession,
   deleteSessionRecord,
+  getGroupMemberDisplayName,
   getSessionRecord,
   saveSessionRecordIfRevisionMatches,
   WORKSHOP_PARTICIPANT_COOKIE,
@@ -17,11 +18,17 @@ async function getParticipantToken() {
   return (await cookies()).get(WORKSHOP_PARTICIPANT_COOKIE)?.value;
 }
 
-function getEditActor(
+async function getEditActor(
   user: Awaited<ReturnType<typeof getUser>>,
-  access: Awaited<ReturnType<typeof canWriteSession>>
+  access: Awaited<ReturnType<typeof canWriteSession>>,
+  sessionId: string
 ) {
-  if (user?.id) return { id: `user:${user.id}`, label: user.email ?? user.id };
+  if (user?.id) {
+    const displayName = access.info?.isGroup
+      ? await getGroupMemberDisplayName(sessionId, user.id, user.email)
+      : null;
+    return { id: `user:${user.id}`, label: displayName ?? user.email ?? user.id };
+  }
   if ("participant" in access && access.participant) {
     return { id: `participant:${access.participant.id}`, label: access.participant.name };
   }
@@ -45,13 +52,19 @@ export async function GET(
     }
 
     const session = await getSessionRecord(id);
+    const memberDisplayName =
+      user && access.info?.isGroup
+        ? await getGroupMemberDisplayName(id, user.id, user.email)
+        : null;
     return NextResponse.json({
       session,
       persisted: true,
       isGroup: Boolean(access.info?.isGroup),
       participant: access.participant
         ? { id: access.participant.id, name: access.participant.name }
-        : null,
+        : memberDisplayName
+          ? { id: `user:${user?.id}`, name: memberDisplayName }
+          : null,
     });
   } catch (error) {
     console.error("Failed to fetch session", error);
@@ -106,7 +119,13 @@ export async function PATCH(
     const participantToken = await getParticipantToken();
     const body = (await request.json()) as { patch?: SessionPatch };
 
-    if (!body.patch || body.patch.sessionId !== id) {
+    if (
+      !body.patch ||
+      body.patch.sessionId !== id ||
+      typeof body.patch.mutationId !== "string" ||
+      !body.patch.mutationId.trim() ||
+      body.patch.mutationId.length > 128
+    ) {
       return NextResponse.json({ error: "更新パッチが不正です。" }, { status: 400 });
     }
 
@@ -118,7 +137,7 @@ export async function PATCH(
       return NextResponse.json({ error: "このセッションを編集する権限がありません。" }, { status: 403 });
     }
 
-    const actor = getEditActor(user, access);
+    const actor = await getEditActor(user, access, id);
     const result = await applySessionPatchRecord(id, body.patch, actor ?? undefined);
     if (!result.ok) {
       return NextResponse.json(
@@ -132,7 +151,12 @@ export async function PATCH(
       );
     }
 
-    return NextResponse.json({ ok: true, revision: result.session.revision });
+    return NextResponse.json({
+      ok: true,
+      duplicate: "duplicate" in result && result.duplicate,
+      revision: result.session.revision,
+      session: result.session,
+    });
   } catch (error) {
     console.error("Failed to patch session", error);
     return NextResponse.json({ error: "セッション更新に失敗しました。" }, { status: 500 });
